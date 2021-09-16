@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from . import mask as maskUtils
 import copy
+import matplotlib.pyplot as plt
 
 class COCOeval:
     # Interface for evaluating detection on the Microsoft COCO dataset.
@@ -146,16 +147,16 @@ class COCOeval:
         elif p.iouType == 'keypoints':
             computeIoU = self.computeOks
         self.ious = {(imgId, catId): computeIoU(imgId, catId) \
-                        for imgId in p.imgIds
-                        for catId in catIds}
+                     for imgId in p.imgIds
+                     for catId in catIds}
 
         evaluateImg = self.evaluateImg
         maxDet = p.maxDets[-1]
         self.evalImgs = [evaluateImg(imgId, catId, areaRng, maxDet)
-                 for catId in catIds
-                 for areaRng in p.areaRng
-                 for imgId in p.imgIds
-             ]
+                         for catId in catIds
+                         for areaRng in p.areaRng
+                         for imgId in p.imgIds
+                         ]
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format(toc-tic))
@@ -232,7 +233,36 @@ class COCOeval:
                 ious[i, j] = np.sum(np.exp(-e)) / e.shape[0]
         return ious
 
-    def evaluateImg(self, imgId, catId, aRng, maxDet):
+    def computeIoU_nonmatching(self, imgId, catId1, catId2):
+        # Compute IoU between gt and dt of non-matching categories
+        p = self.params
+        if p.useCats:
+            gt = self._gts[imgId, catId1]
+            dt = self._dts[imgId, catId2]
+        else:
+            print('Please use p.useCats!')
+        if len(gt) == 0 and len(dt) == 0:
+            return []
+        inds = np.argsort([-d['score'] for d in dt], kind='mergesort')
+        dt = [dt[i] for i in inds]
+        if len(dt) > p.maxDets[-1]:
+            dt = dt[0:p.maxDets[-1]]
+
+        if p.iouType == 'segm':
+            g = [g['segmentation'] for g in gt]
+            d = [d['segmentation'] for d in dt]
+        elif p.iouType == 'bbox':
+            g = [g['bbox'] for g in gt]
+            d = [d['bbox'] for d in dt]
+        else:
+            raise Exception('unknown iouType for iou computation')
+
+        # compute iou between each dt and gt region
+        iscrowd = [int(o['iscrowd']) for o in gt]
+        ious = maskUtils.iou(d, g, iscrowd)
+        return ious
+
+    def evaluateImg(self, imgId, catId, aRng, maxDet, roc=True):
         '''
         perform evaluation for single category and image
         :return: dict (single image results)
@@ -246,6 +276,29 @@ class COCOeval:
             dt = [_ for cId in p.catIds for _ in self._dts[imgId,cId]]
         if len(gt) == 0 and len(dt) ==0:
             return None
+
+        if roc:
+            # Create list of all preds NOT of category catId
+            non_target_dts = []
+            non_target_gts = []
+            for i in range(0, 1000):
+                if i != catId and len(self._dts[imgId, i]) > 0:
+                    for item in self._dts[imgId, i]:
+                        non_target_dts.append(item)
+                if i != catId and len(self._gts[imgId, i]) > 0:
+                    for item in self._gts[imgId, i]:
+                        non_target_gts.append(item)
+
+            # TODO Need IoU of Non-Matching (category) detections and gts
+            # Compute IoUs between non-matching class dts and gts
+            # Create dict containing each category combos
+            # Any IoU greater than the threshold in this dict should be a True Negative
+            non_match_ious = {}
+            for idt in non_target_dts:
+                dt_cat = idt['category_id']
+                for igt in non_target_gts:
+                    gt_cat = igt['category_id']
+                    non_match_ious[(dt_cat, gt_cat)] = self.computeIoU_nonmatching(imgId, dt_cat, gt_cat)
 
         for g in gt:
             if g['ignore'] or (g['area']<aRng[0] or g['area']>aRng[1]):
@@ -269,6 +322,16 @@ class COCOeval:
         dtm  = np.zeros((T,D))
         gtIg = np.array([g['_ignore'] for g in gt])
         dtIg = np.zeros((T,D))
+        dtFP = np.zeros(T)
+        dtTN = np.zeros(T)
+
+        if roc:
+            for tind, t in enumerate(p.iouThrs):
+                # Calculate number of True Negative for each IoU threshold
+                for iou_dict, value in non_match_ious.items():
+                    num_tn = np.sum(value > t)
+                    dtTN[tind] = num_tn
+
         if not len(ious)==0:
             for tind, t in enumerate(p.iouThrs):
                 for dind, d in enumerate(dt):
@@ -290,27 +353,31 @@ class COCOeval:
                         m=gind
                     # if match made store id of match for both dt and gt
                     if m ==-1:
+                        dtFP[tind] += 1
                         continue
                     dtIg[tind,dind] = gtIg[m]
                     dtm[tind,dind]  = gt[m]['id']
                     gtm[tind,m]     = d['id']
+
         # set unmatched detections outside of area range to ignore
         a = np.array([d['area']<aRng[0] or d['area']>aRng[1] for d in dt]).reshape((1, len(dt)))
         dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a,T,0)))
         # store results for given image and category
         return {
-                'image_id':     imgId,
-                'category_id':  catId,
-                'aRng':         aRng,
-                'maxDet':       maxDet,
-                'dtIds':        [d['id'] for d in dt],
-                'gtIds':        [g['id'] for g in gt],
-                'dtMatches':    dtm,
-                'gtMatches':    gtm,
-                'dtScores':     [d['score'] for d in dt],
-                'gtIgnore':     gtIg,
-                'dtIgnore':     dtIg,
-            }
+            'image_id':     imgId,
+            'category_id':  catId,
+            'aRng':         aRng,
+            'maxDet':       maxDet,
+            'dtIds':        [d['id'] for d in dt],
+            'gtIds':        [g['id'] for g in gt],
+            'dtMatches':    dtm,
+            'gtMatches':    gtm,
+            'dtScores':     [d['score'] for d in dt],
+            'gtIgnore':     gtIg,
+            'dtIgnore':     dtIg,
+            'trueNeg':      dtTN,
+            'falsePos':     dtFP
+        }
 
     def accumulate(self, p = None):
         '''
@@ -334,6 +401,7 @@ class COCOeval:
         precision   = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
         recall      = -np.ones((T,K,A,M))
         scores      = -np.ones((T,R,K,A,M))
+        false_pos_rate = -np.ones((T, K, A, M))
 
         # create dictionary for future indexing
         _pe = self._paramsEval
@@ -358,6 +426,8 @@ class COCOeval:
                     E = [self.evalImgs[Nk + Na + i] for i in i_list]
                     E = [e for e in E if not e is None]
                     if len(E) == 0:
+                        recall[:, k, a, m] = 0
+                        false_pos_rate[:, k, a, m] = 0
                         continue
                     dtScores = np.concatenate([e['dtScores'][0:maxDet] for e in E])
 
@@ -371,13 +441,18 @@ class COCOeval:
                     gtIg = np.concatenate([e['gtIgnore'] for e in E])
                     npig = np.count_nonzero(gtIg==0 )
                     if npig == 0:
+                        recall[:, k, a, m] = 0
+                        false_pos_rate[:, k, a, m] = 0
                         continue
                     tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
                     fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
 
+                    tns = np.stack([e['trueNeg'] for e in E]).reshape((T, -1))
+
                     tp_sum = np.cumsum(tps, axis=1).astype(dtype=np.float)
-                    fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)
-                    for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
+                    fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)  # Total false positive
+                    tn_sum = np.cumsum(tns, axis=1).astype(dtype=np.float)
+                    for t, (tp, fp, tn) in enumerate(zip(tp_sum, fp_sum, tn_sum)):
                         tp = np.array(tp)
                         fp = np.array(fp)
                         nd = len(tp)
@@ -385,11 +460,20 @@ class COCOeval:
                         pr = tp / (fp+tp+np.spacing(1))
                         q  = np.zeros((R,))
                         ss = np.zeros((R,))
+                        if len(fp) > 0:
+                            fpr = fp[-1] / (fp[-1] + tn[-1])  # Only use last value to avoid nan values
+                        else:
+                            fpr = 0
+
+                        if fpr != fpr:
+                            fpr = 0
 
                         if nd:
                             recall[t,k,a,m] = rc[-1]
+                            false_pos_rate[t,k,a,m] = fpr
                         else:
                             recall[t,k,a,m] = 0
+                            false_pos_rate[t,k,a,m] = 0
 
                         # numpy is slow without cython optimization for accessing elements
                         # use python array gets significant speed improvement
@@ -415,6 +499,7 @@ class COCOeval:
             'precision': precision,
             'recall':   recall,
             'scores': scores,
+            'fpr': false_pos_rate,
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
@@ -469,6 +554,7 @@ class COCOeval:
             stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
             stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
             stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
+            _summarizeROC()
             return stats
         def _summarizeKps():
             stats = np.zeros((10,))
@@ -483,6 +569,25 @@ class COCOeval:
             stats[8] = _summarize(0, maxDets=20, areaRng='medium')
             stats[9] = _summarize(0, maxDets=20, areaRng='large')
             return stats
+        def _summarizeROC():
+            # Summarize ROC stats
+            fpr = self.eval['fpr'][:, :, 0, 2]  # Use all areas and max detections
+            tpr = self.eval['recall'][:, :, 0, 2]
+
+            # Average over all class categories
+            fpr_single = np.mean(fpr, axis=1)
+            tpr_single = np.mean(tpr, axis=1)
+
+            np.set_printoptions(precision=4)
+
+            print('FPR and TPR values for each IoU...')
+            print(self.params.iouThrs)
+            print(f'FPR: {fpr_single}')
+            print(f'TPR: {tpr_single}')
+
+            # self.plot_roc(fpr_mean, tpr_mean)
+            return
+
         if not self.eval:
             raise Exception('Please run accumulate() first')
         iouType = self.params.iouType
@@ -494,6 +599,172 @@ class COCOeval:
 
     def __str__(self):
         self.summarize()
+
+    # add for per category metric from here
+    def summarize_per_category(self):
+        '''
+        Compute and display summary metrics for evaluation results *per category*.
+        Note this functin can *only* be applied on the default parameter setting
+        '''
+
+        def _summarize_single_category(ap=1, iouThr=None, categoryId=None, areaRng='all', maxDets=100):
+            p = self.params
+            iStr = ' {:<18} {} @[ CategoryId={:>3d} | IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
+            titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
+            typeStr = '(AP)' if ap == 1 else '(AR)'
+            iouStr = '{:0.2f}:{:0.2f}'.format(p.iouThrs[0], p.iouThrs[-1]) \
+                if iouThr is None else '{:0.2f}'.format(iouThr)
+
+            aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
+            mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
+
+            if ap == 1:
+                # dimension of precision: [TxRxKxAxM]
+                s = self.eval['precision']
+                # IoU
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                if categoryId is not None:
+                    category_index = [i for i, i_catId in enumerate(p.catIds) if i_catId == categoryId]
+                    s = s[:, :, category_index, aind, mind]
+                else:
+                    s = s[:, :, :, aind, mind]
+
+            else:
+                # dimension of recall: [TxKxAxM]
+                s = self.eval['recall']
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                if categoryId is not None:
+                    category_index = [i for i, i_catId in enumerate(p.catIds) if i_catId == categoryId]
+                    s = s[:, category_index, aind, mind]
+                else:
+                    s = s[:, :, aind, mind]
+
+            if len(s[s > -1]) == 0:
+                mean_s = -1
+            else:
+                mean_s = np.mean(s[s > -1])
+            # print(iStr.format(titleStr, typeStr, catId, iouStr, areaRng, maxDets, mean_s))
+            return mean_s
+
+        def _summarizeDets_per_category():
+            category_stats = np.zeros((12, len(self.params.catIds)))
+            for category_index, category_id in enumerate(self.params.catIds):
+                category_stats[0][category_index] = _summarize_single_category(1,
+                                                                               categoryId=category_id)
+                category_stats[1][category_index] = _summarize_single_category(1,
+                                                                               iouThr=.5,
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[2][category_index] = _summarize_single_category(1,
+                                                                               iouThr=.75,
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[3][category_index] = _summarize_single_category(1,
+                                                                               areaRng='small',
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[4][category_index] = _summarize_single_category(1,
+                                                                               areaRng='medium',
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[5][category_index] = _summarize_single_category(1,
+                                                                               areaRng='large',
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[6][category_index] = _summarize_single_category(0,
+                                                                               maxDets=self.params.maxDets[0],
+                                                                               categoryId=category_id)
+                category_stats[7][category_index] = _summarize_single_category(0,
+                                                                               maxDets=self.params.maxDets[1],
+                                                                               categoryId=category_id)
+                category_stats[8][category_index] = _summarize_single_category(0,
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[9][category_index] = _summarize_single_category(0,
+                                                                               areaRng='small',
+                                                                               maxDets=self.params.maxDets[2],
+                                                                               categoryId=category_id)
+                category_stats[10][category_index] = _summarize_single_category(0,
+                                                                                areaRng='medium',
+                                                                                maxDets=self.params.maxDets[2],
+                                                                                categoryId=category_id)
+                category_stats[11][category_index] = _summarize_single_category(0,
+                                                                                areaRng='large',
+                                                                                maxDets=self.params.maxDets[2],
+                                                                                categoryId=category_id)
+            return category_stats
+
+
+        def _summarizeKps_per_category():
+            category_stats = np.zeros((10, len(self.params.catIds)))
+            for category_index, category_id in self.params.catIds:
+                category_stats[0][category_index] = _summarize_single_category(1,
+                                                                               maxDets=20,
+                                                                               categoryId=category_id)
+                category_stats[1][category_index] = _summarize_single_category(1,
+                                                                               maxDets=20,
+                                                                               iouThr=.5,
+                                                                               categoryId=category_id)
+                category_stats[2][category_index] = _summarize_single_category(1,
+                                                                               maxDets=20,
+                                                                               iouThr=.75,
+                                                                               categoryId=category_id)
+                category_stats[3][category_index] = _summarize_single_category(1,
+                                                                               maxDets=20,
+                                                                               areaRng='medium',
+                                                                               categoryId=category_id)
+                category_stats[4][category_index] = _summarize_single_category(1,
+                                                                               maxDets=20,
+                                                                               areaRng='large',
+                                                                               categoryId=category_id)
+                category_stats[5][category_index] = _summarize_single_category(0,
+                                                                               maxDets=20,
+                                                                               categoryId=category_id)
+                category_stats[6][category_index] = _summarize_single_category(0,
+                                                                               maxDets=20,
+                                                                               iouThr=.5,
+                                                                               categoryId=category_id)
+                category_stats[7][category_index] = _summarize_single_category(0,
+                                                                               maxDets=20,
+                                                                               iouThr=.75,
+                                                                               categoryId=category_id)
+                category_stats[8][category_index] = _summarize_single_category(0,
+                                                                               maxDets=20,
+                                                                               areaRng='medium',
+                                                                               categoryId=category_id)
+                category_stats[9][category_index] = _summarize_single_category(0,
+                                                                               maxDets=20,
+                                                                               areaRng='large',
+                                                                               categoryId=category_id)
+            return category_stats
+
+        if not self.eval:
+            raise Exception('Please run accumulate() first')
+        iouType = self.params.iouType
+        if iouType == 'segm' or iouType == 'bbox':
+            summarize_per_category = _summarizeDets_per_category
+        elif iouType == 'keypoints':
+            summarize_per_category = _summarizeKps_per_category
+        self.category_stats = summarize_per_category()
+
+    def __str__(self):
+        self.summarize_per_category()
+    # add for metric per category end here
+
+    def plot_roc(self, fpr, tpr):
+        # Reverse order of fpr and tpr so highest IoU threshold is first
+        fpr_flip = np.flip(fpr, axis=0)
+        tpr_flip = np.flip(tpr, axis=0)
+        plt.plot(fpr_flip)
+        plt.ylabel('TPR')
+        plt.xlabel('FPR')
+        plt.show()
+        return
+
 
 class Params:
     '''
