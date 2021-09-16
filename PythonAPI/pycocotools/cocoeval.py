@@ -504,7 +504,7 @@ class COCOeval:
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
 
-    def summarize(self):
+    def summarize(self, roc=False):
         '''
         Compute and display summary metrics for evaluation results.
         Note this functin can *only* be applied on the default parameter setting
@@ -584,6 +584,12 @@ class COCOeval:
             print(self.params.iouThrs)
             print(f'FPR: {fpr_single}')
             print(f'TPR: {tpr_single}')
+
+            with open('roc_records.txt', 'a+') as file:
+                file.write(self.params.iouThrs)
+                file.write(fpr_single)
+                file.write(tpr_single)
+                file.write('\n')
 
             # self.plot_roc(fpr_mean, tpr_mean)
             return
