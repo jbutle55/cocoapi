@@ -586,9 +586,8 @@ class COCOeval:
             print(f'TPR: {tpr_single}')
 
             with open('roc_records.txt', 'a+') as file:
-                file.write(self.params.iouThrs)
-                file.write(fpr_single)
-                file.write(tpr_single)
+                file.write(str(fpr_single[0]))
+                file.write(str(tpr_single[0]))
                 file.write('\n')
 
             # self.plot_roc(fpr_mean, tpr_mean)
