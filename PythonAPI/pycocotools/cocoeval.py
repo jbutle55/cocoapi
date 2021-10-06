@@ -540,22 +540,39 @@ class COCOeval:
                 mean_s = np.mean(s[s>-1])
             print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
             return mean_s
+
+        # Below for testing detection of only small objects in narrow lots
         def _summarizeDets():
-            stats = np.zeros((12,))
-            stats[0] = _summarize(1)
-            stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
-            stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
-            stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
-            stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-            stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-            stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-            stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
+            stats = np.zeros((9,))
+            stats[0] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2])
+            stats[1] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2])
+            stats[2] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2])
+            stats[3] = _summarize(1, areaRng='s4', maxDets=self.params.maxDets[2])
+            stats[4] = _summarize(1, areaRng='s5', maxDets=self.params.maxDets[2])
+            stats[5] = _summarize(1, areaRng='s6', maxDets=self.params.maxDets[2])
+            stats[6] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2])
+            stats[7] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2])
+            stats[8] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+
             _summarizeROC()
             return stats
+
+        # def _summarizeDets():
+        #     stats = np.zeros((12,))
+        #     stats[0] = _summarize(1)
+        #     stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
+        #     stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
+        #     stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+        #     stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+        #     stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+        #     stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
+        #     stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
+        #     stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
+        #     stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
+        #     stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
+        #     stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
+        #     _summarizeROC()
+        #     return stats
         def _summarizeKps():
             stats = np.zeros((10,))
             stats[0] = _summarize(1, maxDets=20)
@@ -784,8 +801,23 @@ class Params:
         self.iouThrs = np.linspace(.5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
         self.recThrs = np.linspace(.0, 1.00, int(np.round((1.00 - .0) / .01)) + 1, endpoint=True)
         self.maxDets = [1, 10, 100]
-        self.areaRng = [[0 ** 2, 1e5 ** 2], [0 ** 2, 32 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
-        self.areaRngLbl = ['all', 'small', 'medium', 'large']
+        # TODO Can create new size divisions here in below 2 lines
+        self.areaRng = [[0 ** 2, 1e5 ** 2],
+                        [0 ** 2, 4**2],  # s1
+                        [4 ** 2, 8 ** 2],  # s2
+                        [8 ** 2, 12 ** 2],  # s3
+                        [12 ** 2, 16 ** 2],  # s4
+                        [16 ** 2, 20 ** 2],  # s5
+                        [20 ** 2, 24 ** 2],  # s6
+                        [24 ** 2, 28 ** 2],  # s7
+                        [28 ** 2, 32 ** 2],  # s8
+                        [0 ** 2, 32 ** 2],  # Small
+                        [32 ** 2, 96 ** 2],  # Medium
+                        [96 ** 2, 1e5 ** 2]]  # Large
+        self.areaRngLbl = ['all', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 'small', 'medium', 'large']
+
+        #self.areaRng = [[0 ** 2, 1e5 ** 2], [0 ** 2, 32 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
+        #self.areaRngLbl = ['all', 'small', 'medium', 'large']
         self.useCats = 1
 
     def setKpParams(self):
