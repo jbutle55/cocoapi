@@ -579,7 +579,7 @@ class COCOeval:
         #     _summarizeROC()
         #     return stats
         def _summarizeKps():
-            stats = np.zeros((10,))
+            stats = np.zeros((11,))
             stats[0] = _summarize(1, maxDets=20)
             stats[1] = _summarize(1, maxDets=20, iouThr=.5)
             stats[2] = _summarize(1, maxDets=20, iouThr=.75)
@@ -590,6 +590,8 @@ class COCOeval:
             stats[7] = _summarize(0, maxDets=20, iouThr=.75)
             stats[8] = _summarize(0, maxDets=20, areaRng='medium')
             stats[9] = _summarize(0, maxDets=20, areaRng='large')
+            stats[10] = _summarize(0, maxDets=20, areaRng='all')
+
             return stats
         def _summarizeROC():
             # Summarize ROC stats
