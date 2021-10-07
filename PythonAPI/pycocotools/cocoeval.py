@@ -546,7 +546,7 @@ class COCOeval:
         # Below for testing detection of only small objects in narrow lots
         def _summarizeDets():
             print('Summarizing small objects only...')
-            stats = np.zeros((11,))
+            stats = np.zeros((23,))
             stats[0] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2])
             stats[1] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2])
             stats[2] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2])
@@ -558,6 +558,19 @@ class COCOeval:
             stats[8] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
             stats[9] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
             stats[10] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+            stats[11] = _summarize(1, areaRng='all', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[12] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[13] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[14] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[15] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[16] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[17] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[18] = _summarize(1, areaRng='s4', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[19] = _summarize(1, areaRng='s5', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[20] = _summarize(1, areaRng='s6', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[21] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2], iouThr=0.5)
+            stats[22] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2], iouThr=0.5)
+
 
             _summarizeROC()
             return stats
