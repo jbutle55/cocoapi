@@ -7,6 +7,8 @@ from collections import defaultdict
 from . import mask as maskUtils
 import copy
 import matplotlib.pyplot as plt
+import os
+
 
 class COCOeval:
     # Interface for evaluating detection on the Microsoft COCO dataset.
@@ -543,7 +545,8 @@ class COCOeval:
 
         # Below for testing detection of only small objects in narrow lots
         def _summarizeDets():
-            stats = np.zeros((9,))
+            print('Summarizing small objects only...')
+            stats = np.zeros((11,))
             stats[0] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2])
             stats[1] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2])
             stats[2] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2])
@@ -553,6 +556,8 @@ class COCOeval:
             stats[6] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2])
             stats[7] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2])
             stats[8] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[9] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[10] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
 
             _summarizeROC()
             return stats
@@ -602,6 +607,7 @@ class COCOeval:
             print(f'FPR: {fpr_single}')
             print(f'TPR: {tpr_single}')
 
+            print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
                 file.write(str(fpr_single[0]))
                 file.write('\n')
