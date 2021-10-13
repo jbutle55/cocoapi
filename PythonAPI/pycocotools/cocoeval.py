@@ -571,8 +571,7 @@ class COCOeval:
             stats[21] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2], iouThr=0.5)
             stats[22] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2], iouThr=0.5)
 
-
-            _summarizeROC()
+            # _summarizeROC()
             return stats
 
         # def _summarizeDets():
