@@ -402,6 +402,7 @@ class COCOeval:
         M           = len(p.maxDets)
         precision   = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
         recall      = -np.ones((T,K,A,M))
+        recall_full = -np.ones((T,R,K,A,M))
         scores      = -np.ones((T,R,K,A,M))
         false_pos_rate = -np.ones((T, K, A, M))
 
@@ -461,6 +462,7 @@ class COCOeval:
                         rc = tp / npig
                         pr = tp / (fp+tp+np.spacing(1))
                         q  = np.zeros((R,))
+                        q_r = np.zeros((R,))  # Created to create recall same size as precision
                         ss = np.zeros((R,))
                         if len(fp) > 0:
                             fpr = fp[-1] / (fp[-1] + tn[-1])  # Only use last value to avoid nan values
@@ -479,7 +481,7 @@ class COCOeval:
 
                         # numpy is slow without cython optimization for accessing elements
                         # use python array gets significant speed improvement
-                        pr = pr.tolist(); q = q.tolist()
+                        pr = pr.tolist(); q = q.tolist(); q_r = q_r.tolist()
 
                         for i in range(nd-1, 0, -1):
                             if pr[i] > pr[i-1]:
@@ -490,10 +492,12 @@ class COCOeval:
                             for ri, pi in enumerate(inds):
                                 q[ri] = pr[pi]
                                 ss[ri] = dtScoresSorted[pi]
+                                q_r[ri] = rc[pi]
                         except:
                             pass
                         precision[t,:,k,a,m] = np.array(q)
                         scores[t,:,k,a,m] = np.array(ss)
+                        recall_full[t,:,k,a,m] = np.array(q_r)
         self.eval = {
             'params': p,
             'counts': [T, R, K, A, M],
@@ -502,6 +506,7 @@ class COCOeval:
             'recall':   recall,
             'scores': scores,
             'fpr': false_pos_rate,
+            'recall_full': recall_full
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
@@ -511,17 +516,50 @@ class COCOeval:
         Compute and display summary metrics for evaluation results.
         Note this functin can *only* be applied on the default parameter setting
         '''
-        def _summarize( ap=1, iouThr=None, areaRng='all', maxDets=100 ):
+        def _summarize( ap=1, iouThr=None, areaRng='all', maxDets=100, f1=None ):
             p = self.params
             iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
-            titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
-            typeStr = '(AP)' if ap==1 else '(AR)'
+            if f1:
+                titleStr = 'F1 Score'
+                typeStr = '(F1)'
+            elif ap == 1:
+                titleStr = 'Average Precision'
+                typeStr = '(AP)'
+            else:
+                titleStr = 'Average Recall'
+                typeStr = '(AR)'
+            # titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
+            # typeStr = '(AP)' if ap==1 else '(AR)'
             iouStr = '{:0.2f}:{:0.2f}'.format(p.iouThrs[0], p.iouThrs[-1]) \
                 if iouThr is None else '{:0.2f}'.format(iouThr)
 
             aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
             mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
-            if ap == 1:
+            if f1:
+                # dimension of precision: [TxRxKxAxM]
+                s = self.eval['precision']
+                # IoU
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                rec = s[:, :, :, aind, mind]
+
+                # dimension of recall: [TxKxAxM]
+                s = self.eval['recall_full']
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                prec = s[:, :, :, aind, mind]
+
+                f1_scores = 2 * (rec * prec) / (rec + prec)
+
+                if len(f1_scores[f1_scores > -1]) == 0:
+                    mean_f1 = -1
+                else:
+                    mean_f1 = np.mean(f1_scores[f1_scores > -1])
+
+
+            elif ap == 1:
                 # dimension of precision: [TxRxKxAxM]
                 s = self.eval['precision']
                 # IoU
@@ -540,56 +578,62 @@ class COCOeval:
                 mean_s = -1
             else:
                 mean_s = np.mean(s[s>-1])
-            print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
+            if f1:
+                print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_f1))
+            else:
+                print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
             return mean_s
 
         # Below for testing detection of only small objects in narrow lots
-        def _summarizeDets():
-            print('Summarizing small objects only...')
-            stats = np.zeros((23,))
-            stats[0] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2])
-            stats[1] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2])
-            stats[2] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2])
-            stats[3] = _summarize(1, areaRng='s4', maxDets=self.params.maxDets[2])
-            stats[4] = _summarize(1, areaRng='s5', maxDets=self.params.maxDets[2])
-            stats[5] = _summarize(1, areaRng='s6', maxDets=self.params.maxDets[2])
-            stats[6] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2])
-            stats[7] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2])
-            stats[8] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[9] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[10] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
-            stats[11] = _summarize(1, areaRng='all', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[12] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[13] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[14] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[15] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[16] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[17] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[18] = _summarize(1, areaRng='s4', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[19] = _summarize(1, areaRng='s5', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[20] = _summarize(1, areaRng='s6', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[21] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2], iouThr=0.5)
-            stats[22] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2], iouThr=0.5)
+        # def _summarizeDets():
+        #     print('Summarizing small objects only...')
+        #     stats = np.zeros((23,))
+        #     stats[0] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2])
+        #     stats[1] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2])
+        #     stats[2] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2])
+        #     stats[3] = _summarize(1, areaRng='s4', maxDets=self.params.maxDets[2])
+        #     stats[4] = _summarize(1, areaRng='s5', maxDets=self.params.maxDets[2])
+        #     stats[5] = _summarize(1, areaRng='s6', maxDets=self.params.maxDets[2])
+        #     stats[6] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2])
+        #     stats[7] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2])
+        #     stats[8] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+        #     stats[9] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+        #     stats[10] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+        #     stats[11] = _summarize(1, areaRng='all', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[12] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[13] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[14] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[15] = _summarize(1, areaRng='s1', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[16] = _summarize(1, areaRng='s2', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[17] = _summarize(1, areaRng='s3', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[18] = _summarize(1, areaRng='s4', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[19] = _summarize(1, areaRng='s5', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[20] = _summarize(1, areaRng='s6', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[21] = _summarize(1, areaRng='s7', maxDets=self.params.maxDets[2], iouThr=0.5)
+        #     stats[22] = _summarize(1, areaRng='s8', maxDets=self.params.maxDets[2], iouThr=0.5)
 
+        #    # _summarizeROC()
+        #    return stats
+
+        def _summarizeDets():
+            stats = np.zeros((12,))
+            stats[0] = _summarize(1)
+            stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
+            stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
+            stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+            stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
+            stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
+            stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
+            stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
             # _summarizeROC()
+            print('F1 Testing Below')
+            _summarizeFscore()
             return stats
 
-        # def _summarizeDets():
-        #     stats = np.zeros((12,))
-        #     stats[0] = _summarize(1)
-        #     stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
-        #     stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
-        #     stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
-        #     stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
-        #     stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
-        #     stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-        #     stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-        #     stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-        #     stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
-        #     stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
-        #     stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
-        #     _summarizeROC()
-        #     return stats
         def _summarizeKps():
             stats = np.zeros((11,))
             stats[0] = _summarize(1, maxDets=20)
@@ -605,6 +649,7 @@ class COCOeval:
             stats[10] = _summarize(0, maxDets=20, areaRng='all')
 
             return stats
+
         def _summarizeROC():
             # Summarize ROC stats
             fpr = self.eval['fpr'][:, :, 0, 2]  # Use all areas and max detections
@@ -631,6 +676,15 @@ class COCOeval:
 
             # self.plot_roc(fpr_mean, tpr_mean)
             return
+
+        def _summarizeFscore():
+            stats = np.zeros((4,))
+            stats[0] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2], f1=True)
+            stats[1] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2], f1=True)
+            stats[2] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2], f1=True)
+            stats[3] = _summarize(1, areaRng='all', maxDets=self.params.maxDets[2], f1=True)
+
+            return stats
 
         if not self.eval:
             raise Exception('Please run accumulate() first')
