@@ -545,6 +545,7 @@ class COCOeval:
                 rec = s[:, :, :, aind, mind]
 
                 # dimension of recall: [TxKxAxM]
+                print(self.eval)
                 s = self.eval['recall_full']
                 if iouThr is not None:
                     t = np.where(iouThr == p.iouThrs)[0]
@@ -557,7 +558,6 @@ class COCOeval:
                     mean_f1 = -1
                 else:
                     mean_f1 = np.mean(f1_scores[f1_scores > -1])
-
 
             elif ap == 1:
                 # dimension of precision: [TxRxKxAxM]
