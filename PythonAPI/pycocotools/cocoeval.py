@@ -545,7 +545,6 @@ class COCOeval:
                 rec = s[:, :, :, aind, mind]
 
                 # dimension of recall: [TxKxAxM]
-                print(self.eval)
                 s = self.eval['recall_full']
                 if iouThr is not None:
                     t = np.where(iouThr == p.iouThrs)[0]
@@ -630,8 +629,8 @@ class COCOeval:
             stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
             stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
             # _summarizeROC()
-            print('F1 Testing Below')
-            _summarizeFscore()
+            # print('F1 Testing Below')
+            # _summarizeFscore()
             return stats
 
         def _summarizeKps():
