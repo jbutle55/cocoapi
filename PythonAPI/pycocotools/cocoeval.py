@@ -628,7 +628,7 @@ class COCOeval:
             stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
             stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
             stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
-            # _summarizeROC()
+            _summarizeROC()
             # print('F1 Testing Below')
             # _summarizeFscore()
             return stats
@@ -667,9 +667,9 @@ class COCOeval:
 
             print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
-                file.write(str(fpr_single[0]))
+                file.write(str(fpr_single))
                 file.write('\n')
-                file.write(str(tpr_single[0]))
+                file.write(str(tpr_single))
                 file.write('\n')
                 file.write('\n')
 
