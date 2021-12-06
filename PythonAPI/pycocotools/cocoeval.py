@@ -189,8 +189,8 @@ class COCOeval:
 
         # compute iou between each dt and gt region
         iscrowd = [int(o['iscrowd']) for o in gt]
-        ious = maskUtils.iou(d,g,iscrowd)
-        return ious
+        iou = maskUtils.iou(d, g, iscrowd)
+        return iou
 
     def computeOks(self, imgId, catId):
         p = self.params
@@ -235,6 +235,23 @@ class COCOeval:
                 ious[i, j] = np.sum(np.exp(-e)) / e.shape[0]
         return ious
 
+    def compute_single_IoU(self, imgId, dt, gt):
+        # Compute IoU between gt and dt of non-matching categories
+        p = self.params
+        if p.iouType == 'segm':
+            g = gt['segmentation']
+            d = dt['segmentation']
+        elif p.iouType == 'bbox':
+            g = [gt['bbox']]
+            d = [dt['bbox']]
+        else:
+            raise Exception('unknown iouType for iou computation')
+
+        # compute iou between each dt and gt region
+        iscrowd = [int(gt['iscrowd'])]
+        ious = maskUtils.iou(d, g, iscrowd)
+        return ious
+
     def computeIoU_nonmatching(self, imgId, catId1, catId2):
         # Compute IoU between gt and dt of non-matching categories
         p = self.params
@@ -271,6 +288,7 @@ class COCOeval:
         '''
         p = self.params
         if p.useCats:
+            # Predictions and gts of the category in question (catId)
             gt = self._gts[imgId,catId]
             dt = self._dts[imgId,catId]
         else:
@@ -280,7 +298,8 @@ class COCOeval:
             return None
 
         if roc:
-            # Create list of all preds NOT of category catId
+            p.scoreThrs = np.linspace(0, 1, 10)
+            # List all preds and gts NOT of category in question (catId)
             non_target_dts = []
             non_target_gts = []
             for i in range(0, 1000):
@@ -291,16 +310,50 @@ class COCOeval:
                     for item in self._gts[imgId, i]:
                         non_target_gts.append(item)
 
-            # TODO Need IoU of Non-Matching (category) detections and gts
-            # Compute IoUs between non-matching class dts and gts
-            # Create dict containing each category combos
-            # Any IoU greater than the threshold in this dict should be a True Negative
-            non_match_ious = {}
-            for idt in non_target_dts:
-                dt_cat = idt['category_id']
-                for igt in non_target_gts:
-                    gt_cat = igt['category_id']
-                    non_match_ious[(dt_cat, gt_cat)] = self.computeIoU_nonmatching(imgId, dt_cat, gt_cat)
+            # Combine lists of gts and preds of class in question and not in question
+            dt_combined = dt + non_target_dts
+            gt_combined = gt + non_target_gts
+
+            # Determine all TP, TN, FP, FN between all preds and gts in image
+            num_tn = {f'{t}': 0 for t in p.scoreThrs}
+            num_tp = {f'{t}': 0 for t in p.scoreThrs}
+            num_fn = {f'{t}': 0 for t in p.scoreThrs}
+            num_fp = {f'{t}': 0 for t in p.scoreThrs}
+            # num_tn = 0
+            # num_tp = 0
+            # num_fn = 0
+            # num_fp = 0
+            for idt in dt_combined:
+                for igt in gt_combined:
+                    # First calc. IoU to see if any overlap between detection and gt
+                    single_iou = self.compute_single_IoU(imgId, idt, igt)
+                    # If IoU less than 0.5, not related to gt in question
+                    if single_iou.squeeze() > 0.5:
+                        # catId is the category in question
+                        dt_cat = idt['category_id']
+                        gt_cat = igt['category_id']
+
+                        for sidx, score in enumerate(p.scoreThrs):
+                            # Determine tp, tn, fp, fn for every score division
+                            dt_score = idt['score']
+
+                            if gt_cat == catId:
+                                if dt_cat == gt_cat:  # TP
+                                    # Check score above or below thresh
+                                    if dt_score > score:  # Predicting "Is 1" so TP
+                                        num_tp[f'{score}'] += 1
+                                    else:  # Otherwise predicting "Not 1" so FN
+                                        num_fn[f'{score}'] += 1
+
+                            else:
+                                if dt_cat != gt_cat:
+                                    if dt_cat == catId:  # FP
+                                        num_fp[f'{score}'] += 1
+                                    elif dt_cat != catId:  # TN
+                                        num_tn[f'{score}'] += 1
+                                elif dt_cat == gt_cat:  # TN
+                                    if dt_score > score:
+                                        num_tn[f'{score}'] += 1
 
         for g in gt:
             if g['ignore'] or (g['area']<aRng[0] or g['area']>aRng[1]):
@@ -324,15 +377,6 @@ class COCOeval:
         dtm  = np.zeros((T,D))
         gtIg = np.array([g['_ignore'] for g in gt])
         dtIg = np.zeros((T,D))
-        dtFP = np.zeros(T)
-        dtTN = np.zeros(T)
-
-        if roc:
-            for tind, t in enumerate(p.iouThrs):
-                # Calculate number of True Negative for each IoU threshold
-                for iou_dict, value in non_match_ious.items():
-                    num_tn = np.sum(value > t)
-                    dtTN[tind] = num_tn
 
         if not len(ious)==0:
             for tind, t in enumerate(p.iouThrs):
@@ -355,7 +399,6 @@ class COCOeval:
                         m=gind
                     # if match made store id of match for both dt and gt
                     if m ==-1:
-                        dtFP[tind] += 1
                         continue
                     dtIg[tind,dind] = gtIg[m]
                     dtm[tind,dind]  = gt[m]['id']
@@ -377,8 +420,10 @@ class COCOeval:
             'dtScores':     [d['score'] for d in dt],
             'gtIgnore':     gtIg,
             'dtIgnore':     dtIg,
-            'trueNeg':      dtTN,
-            'falsePos':     dtFP
+            'trueNeg':      num_tn,
+            'falseNeg':     num_fn,
+            'falsePos':     num_fp,
+            'truePos':      num_tp
         }
 
     def accumulate(self, p = None):
@@ -395,16 +440,18 @@ class COCOeval:
         if p is None:
             p = self.params
         p.catIds = p.catIds if p.useCats == 1 else [-1]
-        T           = len(p.iouThrs)
-        R           = len(p.recThrs)
-        K           = len(p.catIds) if p.useCats else 1
-        A           = len(p.areaRng)
-        M           = len(p.maxDets)
+        T           = len(p.iouThrs)  # IoU Thresholds
+        R           = len(p.recThrs)  # Recall Thresholds
+        K           = len(p.catIds) if p.useCats else 1  # Number Categories
+        A           = len(p.areaRng)  # Area ranges
+        M           = len(p.maxDets)  # Max number of preds
+        C           = len(p.scoreThrs)  # ROC Score Levels
         precision   = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
         recall      = -np.ones((T,K,A,M))
-        recall_full = -np.ones((T,R,K,A,M))
         scores      = -np.ones((T,R,K,A,M))
-        false_pos_rate = -np.ones((T, K, A, M))
+        false_pos_rate = -np.ones((T, K, A, M, C))
+        true_pos_rate = -np.ones((T, K, A, M, C))
+
 
         # create dictionary for future indexing
         _pe = self._paramsEval
@@ -429,8 +476,8 @@ class COCOeval:
                     E = [self.evalImgs[Nk + Na + i] for i in i_list]
                     E = [e for e in E if not e is None]
                     if len(E) == 0:
-                        recall[:, k, a, m] = 0
-                        false_pos_rate[:, k, a, m] = 0
+                        false_pos_rate[:, k, a, m, :] = 0
+                        true_pos_rate[:, k, a, m, :] = 0
                         continue
                     dtScores = np.concatenate([e['dtScores'][0:maxDet] for e in E])
 
@@ -444,18 +491,15 @@ class COCOeval:
                     gtIg = np.concatenate([e['gtIgnore'] for e in E])
                     npig = np.count_nonzero(gtIg==0 )
                     if npig == 0:
-                        recall[:, k, a, m] = 0
-                        false_pos_rate[:, k, a, m] = 0
+                        false_pos_rate[:, k, a, m, :] = 0
+                        true_pos_rate[:, k, a, m, :] = 0
                         continue
                     tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
                     fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
 
-                    tns = np.stack([e['trueNeg'] for e in E]).reshape((T, -1))
-
                     tp_sum = np.cumsum(tps, axis=1).astype(dtype=np.float)
                     fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)  # Total false positive
-                    tn_sum = np.cumsum(tns, axis=1).astype(dtype=np.float)
-                    for t, (tp, fp, tn) in enumerate(zip(tp_sum, fp_sum, tn_sum)):
+                    for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
                         tp = np.array(tp)
                         fp = np.array(fp)
                         nd = len(tp)
@@ -464,20 +508,11 @@ class COCOeval:
                         q  = np.zeros((R,))
                         q_r = np.zeros((R,))  # Created to create recall same size as precision
                         ss = np.zeros((R,))
-                        if len(fp) > 0:
-                            fpr = fp[-1] / (fp[-1] + tn[-1])  # Only use last value to avoid nan values
-                        else:
-                            fpr = 0
-
-                        if fpr != fpr:
-                            fpr = 0
 
                         if nd:
                             recall[t,k,a,m] = rc[-1]
-                            false_pos_rate[t,k,a,m] = fpr
                         else:
                             recall[t,k,a,m] = 0
-                            false_pos_rate[t,k,a,m] = 0
 
                         # numpy is slow without cython optimization for accessing elements
                         # use python array gets significant speed improvement
@@ -492,12 +527,32 @@ class COCOeval:
                             for ri, pi in enumerate(inds):
                                 q[ri] = pr[pi]
                                 ss[ri] = dtScoresSorted[pi]
-                                q_r[ri] = rc[pi]
                         except:
                             pass
                         precision[t,:,k,a,m] = np.array(q)
                         scores[t,:,k,a,m] = np.array(ss)
-                        recall_full[t,:,k,a,m] = np.array(q_r)
+
+                    # ROC data
+                    tp_total = {}
+                    fp_total = {}
+                    tn_total = {}
+                    fn_total = {}
+                    for c, score in enumerate(p.scoreThrs):
+                        tp_total[f'{score}'] = np.sum([e['truePos'][f'{score}'] for e in E])
+                        fp_total[f'{score}'] = np.sum([e['falsePos'][f'{score}'] for e in E])
+                        tn_total[f'{score}'] = np.sum([e['trueNeg'][f'{score}'] for e in E])
+                        fn_total[f'{score}'] = np.sum([e['falseNeg'][f'{score}'] for e in E])
+
+                        # [iou_thresh, category, area, max_dets]
+                        if (tp_total[f'{score}'] + fn_total[f'{score}']) == 0:
+                            true_pos_rate[:, k, a, m, c] = 0
+                        else:
+                            true_pos_rate[:, k, a, m, c] = tp_total[f'{score}'] / (tp_total[f'{score}'] + fn_total[f'{score}'])
+                        if (tn_total[f'{score}'] + fp_total[f'{score}']) == 0:
+                            false_pos_rate[:, k, a, m, c] = 0
+                        else:
+                            false_pos_rate[:, k, a, m, c] = fp_total[f'{score}'] / (tn_total[f'{score}'] + fp_total[f'{score}'])
+
         self.eval = {
             'params': p,
             'counts': [T, R, K, A, M],
@@ -506,7 +561,7 @@ class COCOeval:
             'recall':   recall,
             'scores': scores,
             'fpr': false_pos_rate,
-            'recall_full': recall_full
+            'tpr': true_pos_rate
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
@@ -649,24 +704,27 @@ class COCOeval:
 
             return stats
 
-        def _summarizeROC():
+        def _summarizeROC(iouThr=0.5):
             # Summarize ROC stats
-            fpr = self.eval['fpr'][:, :, 0, 2]  # Use all areas and max detections
-            tpr = self.eval['recall'][:, :, 0, 2]
+            p = self.params
+            t = np.where(iouThr == p.iouThrs)[0]
+
+            fpr = self.eval['fpr'][t, :, 0, 2, :]  # Use all areas and max detections
+            tpr = self.eval['tpr'][t, :, 0, 2, :]
 
             # Average over all class categories
-            fpr_single = np.mean(fpr, axis=1)
-            tpr_single = np.mean(tpr, axis=1)
+            fpr_single = np.mean(fpr, axis=1)[0]
+            tpr_single = np.mean(tpr, axis=1)[0]
 
             np.set_printoptions(precision=4)
 
-            print('FPR and TPR values for each IoU...')
-            print(self.params.iouThrs)
-            print(f'FPR: {fpr_single}')
-            print(f'TPR: {tpr_single}')
+            # print('FPR and TPR values...')
+            # print(f'FPR: {fpr_single}')
+            # print(f'TPR: {tpr_single}')
 
             print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
+                file.write(f'Confidence: {p.scoreThrs}\n')
                 file.write(str(fpr_single))
                 file.write('\n')
                 file.write(str(tpr_single))
@@ -852,6 +910,22 @@ class COCOeval:
         self.summarize_per_category()
     # add for metric per category end here
 
+    def compute_roc(self):
+
+        """
+        Handle all ROC calculations and accumulation of data.
+        Will calculate N ROC statistics for N classes
+        Will also average these statistics by N for single all-encompassing ROC
+        Steps for a set confidence threshold:
+        1. Calculate TPR/Recall/Sensitivity
+        2. Calculate Specificity
+        3. Calculate FPR = 1 - Specificity
+        4. Average across N classes
+        5. Plot if desired
+        """
+
+        return
+
     def plot_roc(self, fpr, tpr):
         # Reverse order of fpr and tpr so highest IoU threshold is first
         fpr_flip = np.flip(fpr, axis=0)
@@ -892,6 +966,7 @@ class Params:
         #self.areaRng = [[0 ** 2, 1e5 ** 2], [0 ** 2, 32 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
         #self.areaRngLbl = ['all', 'small', 'medium', 'large']
         self.useCats = 1
+        self.scoreThrs = np.linspace(0, 1, 10)  # For ROC confidence levels
 
     def setKpParams(self):
         self.imgIds = []
