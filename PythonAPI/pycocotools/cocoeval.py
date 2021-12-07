@@ -552,6 +552,9 @@ class COCOeval:
                             false_pos_rate[:, k, a, m, c] = 0
                         else:
                             false_pos_rate[:, k, a, m, c] = fp_total[f'{score}'] / (tn_total[f'{score}'] + fp_total[f'{score}'])
+                            tn = tn_total[f'{score}']
+                            fp =fp_total[f'{score}']
+                            print(f'True Neg to False Pos Ratio: {tn / fp}')
 
         self.eval = {
             'params': p,
@@ -730,6 +733,9 @@ class COCOeval:
                 file.write(str(tpr_single))
                 file.write('\n')
                 file.write('\n')
+                file.write(str(fpr))
+                file.write('\n')
+                file.write(str(tpr))
 
             # self.plot_roc(fpr_mean, tpr_mean)
             return
