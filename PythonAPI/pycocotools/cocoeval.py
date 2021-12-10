@@ -324,20 +324,30 @@ class COCOeval:
             # num_fn = 0
             # num_fp = 0
             for idt in dt_combined:
+                # catId is the category in question
+                dt_cat = idt['category_id']
+                pred_found = False
+                # For each prediction, loop through all gts to see if it's a TP first, then other possibilites
                 for igt in gt_combined:
+                    # catId is the category in question
+                    gt_cat = igt['category_id']
+
                     # First calc. IoU to see if any overlap between detection and gt
                     single_iou = self.compute_single_IoU(imgId, idt, igt)
-                    # If IoU less than 0.5, not related to gt in question
-                    if single_iou.squeeze() > 0.5:
-                        # catId is the category in question
-                        dt_cat = idt['category_id']
-                        gt_cat = igt['category_id']
 
+                    # If IoU greater than 0.5, potential for TP or FN
+                    if single_iou.squeeze() > 0.5:
+                        pred_found = True
                         for sidx, score in enumerate(p.scoreThrs):
-                            # Determine tp, tn, fp, fn for every score division
                             dt_score = idt['score']
 
-                            if gt_cat == catId:
+                            # Setup for only a single class
+                            if dt_score >= score:  # Positive pred
+                                num_tp[f'{score}'] += 1
+                            else:
+                                num_fn[f'{score}'] += 1
+
+                            """if gt_cat == catId:
                                 if dt_cat == gt_cat:  # TP
                                     # Check score above or below thresh
                                     if dt_score > score:  # Predicting "Is 1" so TP
@@ -353,7 +363,19 @@ class COCOeval:
                                         num_tn[f'{score}'] += 1
                                 elif dt_cat == gt_cat:  # TN
                                     if dt_score > score:
-                                        num_tn[f'{score}'] += 1
+                                        num_tn[f'{score}'] += 1"""
+
+                if not pred_found:
+                    # Means there was no good prediction for any gt
+                    # Therefore could be TN or FP
+                    for sidx, score in enumerate(p.scoreThrs):
+                        dt_score = idt['score']
+
+                        # Setup for only a single class
+                        if dt_score >= score:  # False Positive pred
+                            num_fp[f'{score}'] += 1
+                        else:
+                            num_tn[f'{score}'] += 1
 
         for g in gt:
             if g['ignore'] or (g['area']<aRng[0] or g['area']>aRng[1]):
@@ -733,9 +755,9 @@ class COCOeval:
                 file.write(str(tpr_single))
                 file.write('\n')
                 file.write('\n')
-                file.write(str(fpr))
-                file.write('\n')
-                file.write(str(tpr))
+                # file.write(str(fpr))
+                # file.write('\n')
+                # file.write(str(tpr))
 
             # self.plot_roc(fpr_mean, tpr_mean)
             return
