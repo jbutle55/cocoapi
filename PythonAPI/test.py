@@ -21,7 +21,7 @@ cocoGt=COCO(annFile)
 #initialize COCO detections api
 resFile='%s/results/%s_%s_fake%s100_results.json'
 resFile = resFile%(dataDir, prefix, dataType, annType)
-resFile = '/Models/detectron2/aerial_cars/coco_instances_results.json'
+resFile = '/home/justin/Models/detectron2/aerial_cars/coco_instances_results.json'
 # resFile = '/Users/justinbutler/Desktop/school/Calgary/ML_Work/cocoapi/results/instances_val2014_fakesegm100_results.json'
 cocoDt=cocoGt.loadRes(resFile)
 
