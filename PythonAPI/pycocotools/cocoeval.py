@@ -298,7 +298,7 @@ class COCOeval:
             return None
 
         if roc:
-            p.scoreThrs = np.linspace(0, 1, 10)
+            p.scoreThrs = np.linspace(0.0, 1.0, 100)
             # List all preds and gts NOT of category in question (catId)
             non_target_dts = []
             non_target_gts = []
@@ -325,10 +325,17 @@ class COCOeval:
             # num_fp = 0
             for idt in dt_combined:
                 # catId is the category in question
+                target_id = 1
+                if idt['category_id'] != target_id:
+                    # Only look at ROC for a single class at a time
+                    continue
+
                 dt_cat = idt['category_id']
                 pred_found = False
                 # For each prediction, loop through all gts to see if it's a TP first, then other possibilites
                 for igt in gt_combined:
+                    if igt['category_id'] != target_id:
+                        continue
                     # catId is the category in question
                     gt_cat = igt['category_id']
 
@@ -574,9 +581,9 @@ class COCOeval:
                             false_pos_rate[:, k, a, m, c] = 0
                         else:
                             false_pos_rate[:, k, a, m, c] = fp_total[f'{score}'] / (tn_total[f'{score}'] + fp_total[f'{score}'])
-                            tn = tn_total[f'{score}']
-                            fp =fp_total[f'{score}']
-                            print(f'True Neg to False Pos Ratio: {tn / fp}')
+                            # tn = tn_total[f'{score}']
+                            # fp =fp_total[f'{score}']
+                            # print(f'True Neg to False Pos Ratio: {tn / fp}')
 
         self.eval = {
             'params': p,
