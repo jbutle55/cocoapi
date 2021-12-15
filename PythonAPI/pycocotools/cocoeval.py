@@ -298,7 +298,7 @@ class COCOeval:
             return None
 
         if roc:
-            p.scoreThrs = np.linspace(0.0, 1.0, 100)
+            p.scoreThrs = np.linspace(0.0, 1.0, 50)
             # List all preds and gts NOT of category in question (catId)
             non_target_dts = []
             non_target_gts = []
@@ -756,7 +756,8 @@ class COCOeval:
 
             print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
-                file.write(f'Confidence: {p.scoreThrs}\n')
+                file.write(str(p.scoreThrs))
+                file.write('\n')
                 file.write(str(fpr_single))
                 file.write('\n')
                 file.write(str(tpr_single))
