@@ -756,8 +756,10 @@ class COCOeval:
 
             print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
-                file.write(str(p.scoreThrs))
+                file.write(f'target id: 1')
                 file.write('\n')
+                # file.write(str(p.scoreThrs))
+                # file.write('\n')
                 file.write(str(fpr_single))
                 file.write('\n')
                 file.write(str(tpr_single))
