@@ -702,6 +702,7 @@ class COCOeval:
         #    return stats
 
         def _summarizeDets():
+            print('Summarizing...')
             stats = np.zeros((12,))
             stats[0] = _summarize(1)
             stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
