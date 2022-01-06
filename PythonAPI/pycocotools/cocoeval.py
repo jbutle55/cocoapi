@@ -325,7 +325,7 @@ class COCOeval:
             # num_fp = 0
             for idt in dt_combined:
                 # catId is the category in question
-                target_id = 14
+                target_id = 1
                 if idt['category_id'] != target_id:
                     # Only look at ROC for a single class at a time
                     continue
@@ -756,7 +756,7 @@ class COCOeval:
 
             print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
-                file.write(f'target id: 14')
+                file.write(f'target id: 1 - Cars')
                 file.write('\n')
                 # file.write(str(p.scoreThrs))
                 # file.write('\n')
