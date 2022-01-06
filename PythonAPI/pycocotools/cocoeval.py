@@ -737,6 +737,7 @@ class COCOeval:
             return stats
 
         def _summarizeROC(iouThr=0.5):
+            print('Evaluating ROC')
             # Summarize ROC stats
             p = self.params
             t = np.where(iouThr == p.iouThrs)[0]
