@@ -751,6 +751,7 @@ class COCOeval:
             tpr_single = np.mean(tpr, axis=1)[0]
 
             np.set_printoptions(precision=4)
+            np.set_printoptions(suppress=True)
 
             # print('FPR and TPR values...')
             # print(f'FPR: {fpr_single}')
