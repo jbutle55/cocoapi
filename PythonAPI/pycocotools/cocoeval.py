@@ -791,6 +791,7 @@ class COCOeval:
             summarize = _summarizeDets
         elif iouType == 'keypoints':
             summarize = _summarizeKps
+        print('Summarizing here...')
         self.stats = summarize()
 
     def __str__(self):
