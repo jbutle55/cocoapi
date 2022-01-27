@@ -153,12 +153,17 @@ class COCOeval:
                      for catId in catIds}
 
         evaluateImg = self.evaluateImg
+        rocImg = self.compute_roc
         maxDet = p.maxDets[-1]
         self.evalImgs = [evaluateImg(imgId, catId, areaRng, maxDet)
                          for catId in catIds
                          for areaRng in p.areaRng
                          for imgId in p.imgIds
                          ]
+        self.rocImgs = [rocImg(imgId, catId, maxDet, simple_roc=True)
+                        for catId in catIds
+                        for imgId in p.imgIds
+                        ]
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format(toc-tic))
@@ -281,7 +286,7 @@ class COCOeval:
         ious = maskUtils.iou(d, g, iscrowd)
         return ious
 
-    def evaluateImg(self, imgId, catId, aRng, maxDet, roc=True):
+    def evaluateImg(self, imgId, catId, aRng, maxDet, roc=False):
         '''
         perform evaluation for single category and image
         :return: dict (single image results)
@@ -296,93 +301,6 @@ class COCOeval:
             dt = [_ for cId in p.catIds for _ in self._dts[imgId,cId]]
         if len(gt) == 0 and len(dt) ==0:
             return None
-
-        if roc:
-            p.scoreThrs = np.linspace(0.0, 1.0, 50)
-            # List all preds and gts NOT of category in question (catId)
-            non_target_dts = []
-            non_target_gts = []
-            for i in range(0, 1000):
-                if i != catId and len(self._dts[imgId, i]) > 0:
-                    for item in self._dts[imgId, i]:
-                        non_target_dts.append(item)
-                if i != catId and len(self._gts[imgId, i]) > 0:
-                    for item in self._gts[imgId, i]:
-                        non_target_gts.append(item)
-
-            # Combine lists of gts and preds of class in question and not in question
-            dt_combined = dt + non_target_dts
-            gt_combined = gt + non_target_gts
-
-            # Determine all TP, TN, FP, FN between all preds and gts in image
-            num_tn = {f'{t}': 0 for t in p.scoreThrs}
-            num_tp = {f'{t}': 0 for t in p.scoreThrs}
-            num_fn = {f'{t}': 0 for t in p.scoreThrs}
-            num_fp = {f'{t}': 0 for t in p.scoreThrs}
-            # num_tn = 0
-            # num_tp = 0
-            # num_fn = 0
-            # num_fp = 0
-            for idt in dt_combined:
-                # catId is the category in question
-                target_id = 1
-                if idt['category_id'] != target_id:
-                    # Only look at ROC for a single class at a time
-                    continue
-
-                dt_cat = idt['category_id']
-                pred_found = False
-                # For each prediction, loop through all gts to see if it's a TP first, then other possibilites
-                for igt in gt_combined:
-                    if igt['category_id'] != target_id:
-                        continue
-                    # catId is the category in question
-                    gt_cat = igt['category_id']
-
-                    # First calc. IoU to see if any overlap between detection and gt
-                    single_iou = self.compute_single_IoU(imgId, idt, igt)
-
-                    # If IoU greater than 0.5, potential for TP or FN
-                    if single_iou.squeeze() > 0.5:
-                        pred_found = True
-                        for sidx, score in enumerate(p.scoreThrs):
-                            dt_score = idt['score']
-
-                            # Setup for only a single class
-                            if dt_score >= score:  # Positive pred
-                                num_tp[f'{score}'] += 1
-                            else:
-                                num_fn[f'{score}'] += 1
-
-                            """if gt_cat == catId:
-                                if dt_cat == gt_cat:  # TP
-                                    # Check score above or below thresh
-                                    if dt_score > score:  # Predicting "Is 1" so TP
-                                        num_tp[f'{score}'] += 1
-                                    else:  # Otherwise predicting "Not 1" so FN
-                                        num_fn[f'{score}'] += 1
-
-                            else:
-                                if dt_cat != gt_cat:
-                                    if dt_cat == catId:  # FP
-                                        num_fp[f'{score}'] += 1
-                                    elif dt_cat != catId:  # TN
-                                        num_tn[f'{score}'] += 1
-                                elif dt_cat == gt_cat:  # TN
-                                    if dt_score > score:
-                                        num_tn[f'{score}'] += 1"""
-
-                if not pred_found:
-                    # Means there was no good prediction for any gt
-                    # Therefore could be TN or FP
-                    for sidx, score in enumerate(p.scoreThrs):
-                        dt_score = idt['score']
-
-                        # Setup for only a single class
-                        if dt_score >= score:  # False Positive pred
-                            num_fp[f'{score}'] += 1
-                        else:
-                            num_tn[f'{score}'] += 1
 
         for g in gt:
             if g['ignore'] or (g['area']<aRng[0] or g['area']>aRng[1]):
@@ -448,11 +366,7 @@ class COCOeval:
             'gtMatches':    gtm,
             'dtScores':     [d['score'] for d in dt],
             'gtIgnore':     gtIg,
-            'dtIgnore':     dtIg,
-            'trueNeg':      num_tn,
-            'falseNeg':     num_fn,
-            'falsePos':     num_fp,
-            'truePos':      num_tp
+            'dtIgnore':     dtIg
         }
 
     def accumulate(self, p = None):
@@ -478,9 +392,6 @@ class COCOeval:
         precision   = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
         recall      = -np.ones((T,K,A,M))
         scores      = -np.ones((T,R,K,A,M))
-        false_pos_rate = -np.ones((T, K, A, M, C))
-        true_pos_rate = -np.ones((T, K, A, M, C))
-
 
         # create dictionary for future indexing
         _pe = self._paramsEval
@@ -505,8 +416,6 @@ class COCOeval:
                     E = [self.evalImgs[Nk + Na + i] for i in i_list]
                     E = [e for e in E if not e is None]
                     if len(E) == 0:
-                        false_pos_rate[:, k, a, m, :] = 0
-                        true_pos_rate[:, k, a, m, :] = 0
                         continue
                     dtScores = np.concatenate([e['dtScores'][0:maxDet] for e in E])
 
@@ -520,8 +429,6 @@ class COCOeval:
                     gtIg = np.concatenate([e['gtIgnore'] for e in E])
                     npig = np.count_nonzero(gtIg==0 )
                     if npig == 0:
-                        false_pos_rate[:, k, a, m, :] = 0
-                        true_pos_rate[:, k, a, m, :] = 0
                         continue
                     tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
                     fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
@@ -561,29 +468,43 @@ class COCOeval:
                         precision[t,:,k,a,m] = np.array(q)
                         scores[t,:,k,a,m] = np.array(ss)
 
-                    # ROC data
-                    tp_total = {}
-                    fp_total = {}
-                    tn_total = {}
-                    fn_total = {}
-                    for c, score in enumerate(p.scoreThrs):
-                        tp_total[f'{score}'] = np.sum([e['truePos'][f'{score}'] for e in E])
-                        fp_total[f'{score}'] = np.sum([e['falsePos'][f'{score}'] for e in E])
-                        tn_total[f'{score}'] = np.sum([e['trueNeg'][f'{score}'] for e in E])
-                        fn_total[f'{score}'] = np.sum([e['falseNeg'][f'{score}'] for e in E])
+        # ROC data - Accumulate per category and score level. Then average over categories
+        cat_totals = {}
+        for score in p.scoreThrs:
+            cat_totals[score] = {}
+            cat_totals[score] = {}
+            cat_totals[score] = {}
+            cat_totals[score] = {}
 
-                        # [iou_thresh, category, area, max_dets]
-                        if (tp_total[f'{score}'] + fn_total[f'{score}']) == 0:
-                            true_pos_rate[:, k, a, m, c] = 0
-                        else:
-                            true_pos_rate[:, k, a, m, c] = tp_total[f'{score}'] / (tp_total[f'{score}'] + fn_total[f'{score}'])
-                        if (tn_total[f'{score}'] + fp_total[f'{score}']) == 0:
-                            false_pos_rate[:, k, a, m, c] = 0
-                        else:
-                            false_pos_rate[:, k, a, m, c] = fp_total[f'{score}'] / (tn_total[f'{score}'] + fp_total[f'{score}'])
-                            # tn = tn_total[f'{score}']
-                            # fp =fp_total[f'{score}']
-                            # print(f'True Neg to False Pos Ratio: {tn / fp}')
+            cat_totals[score]['tp'] = 0
+            cat_totals[score]['fp'] = 0
+            cat_totals[score]['tn'] = 0
+            cat_totals[score]['fn'] = 0
+
+        for id, item in enumerate(self.rocImgs):
+            if type(item) is type(None):
+                # Means there were no preds/gts in that image
+                continue
+            for score in p.scoreThrs:
+                cat_totals[score]['tp'] += item['truePos'][score]
+                cat_totals[score]['fp'] += item['falsePos'][score]
+                cat_totals[score]['tn'] += item['trueNeg'][score]
+                cat_totals[score]['fn'] += item['falseNeg'][score]
+
+        tpr = {}
+        fpr = {}
+        for score in p.scoreThrs:
+            # TPR = TP / (TP + FN)
+            if cat_totals[score]['tp'] == 0:
+                tpr[score] = 0
+            else:
+                tpr[score] = cat_totals[score]['tp'] / (cat_totals[score]['tp'] + cat_totals[score]['fp'])
+
+            # FPR = FP / (TN + FP)
+            if cat_totals[score]['fp'] == 0:
+                fpr[score] = 0
+            else:
+                fpr[score] = cat_totals[score]['fp'] / (cat_totals[score]['tn'] + cat_totals[score]['fp'])
 
         self.eval = {
             'params': p,
@@ -592,8 +513,8 @@ class COCOeval:
             'precision': precision,
             'recall':   recall,
             'scores': scores,
-            'fpr': false_pos_rate,
-            'tpr': true_pos_rate
+            'fpr': fpr,
+            'tpr': tpr
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
@@ -743,36 +664,28 @@ class COCOeval:
             p = self.params
             t = np.where(iouThr == p.iouThrs)[0]
 
-            fpr = self.eval['fpr'][t, :, 0, 2, :]  # Use all areas and max detections
-            tpr = self.eval['tpr'][t, :, 0, 2, :]
+            fpr = self.eval['fpr']
+            tpr = self.eval['tpr']
 
-            # Average over all class categories
-            fpr_single = np.mean(fpr, axis=1)[0]
-            tpr_single = np.mean(tpr, axis=1)[0]
+            fpr_list = [fpr[item] for item in fpr]
+            tpr_list = [tpr[item] for item in tpr]
+            score_list = [item for item in p.scoreThrs]
 
             np.set_printoptions(precision=4)
             np.set_printoptions(suppress=True)
 
-            # print('FPR and TPR values...')
-            # print(f'FPR: {fpr_single}')
-            # print(f'TPR: {tpr_single}')
-
             print(f'ROC file at: {os.getcwd()}')
             with open('roc_records.txt', 'a+') as file:
-                file.write(f'target id: 1 - Cars')
+                file.write(str(score_list))
                 file.write('\n')
-                # file.write(str(p.scoreThrs))
-                # file.write('\n')
-                file.write(str(fpr_single))
+                file.write('FPR:\n')
+                file.write(str(fpr_list))
                 file.write('\n')
-                file.write(str(tpr_single))
+                file.write('TPR:\n')
+                file.write(str(tpr_list))
                 file.write('\n')
-                file.write('\n')
-                # file.write(str(fpr))
-                # file.write('\n')
-                # file.write(str(tpr))
 
-            # self.plot_roc(fpr_mean, tpr_mean)
+            self.plot_roc(fpr_list, tpr_list)
             return
 
         def _summarizeFscore():
@@ -791,7 +704,6 @@ class COCOeval:
             summarize = _summarizeDets
         elif iouType == 'keypoints':
             summarize = _summarizeKps
-        print('Summarizing here...')
         self.stats = summarize()
 
     def __str__(self):
@@ -952,30 +864,118 @@ class COCOeval:
         self.summarize_per_category()
     # add for metric per category end here
 
-    def compute_roc(self):
+    def compute_roc(self, imgId, catId, maxDet, simple_roc=True, complex_roc=False):
+        '''
+         perform evaluation for single category and image
+         :return: dict (single image results)
+         '''
+        p = self.params
+        iou_thresh = 0.5
 
-        """
-        Handle all ROC calculations and accumulation of data.
-        Will calculate N ROC statistics for N classes
-        Will also average these statistics by N for single all-encompassing ROC
-        Steps for a set confidence threshold:
-        1. Calculate TPR/Recall/Sensitivity
-        2. Calculate Specificity
-        3. Calculate FPR = 1 - Specificity
-        4. Average across N classes
-        5. Plot if desired
-        """
+        all_gt = []
+        all_dt = []
+        for cat in p.catIds:
+            if len(self._gts[imgId, cat]) != 0:
+                all_gt.append(self._gts[imgId, cat])
+            if len(self._dts[imgId, cat]) != 0:
+                all_dt.append(self._dts[imgId, cat])
 
-        return
+        if len(all_gt) == 0 and len(all_dt) == 0:
+            # Nothing detected and nothing to be detected so skip
+            return None
+
+        # Get list of dicts
+        all_dt = [item for x in range(len(all_dt)) for item in all_dt[x]]
+        all_gt = [item for x in range(len(all_gt)) for item in all_gt[x]]
+
+        p.scoreThrs = np.linspace(0.0, 1.0, 100)
+
+        # Determine TP, FP, TN, FN using catId as TP class
+        # Determine these values for each confidence level of p.scoreThrs
+        num_tn = {t: 0 for t in p.scoreThrs}
+        num_tp = {t: 0 for t in p.scoreThrs}
+        num_fn = {t: 0 for t in p.scoreThrs}
+        num_fp = {t: 0 for t in p.scoreThrs}
+        for pred in all_dt:
+            for gt in all_gt:
+                iou = self.compute_single_IoU(imgId, pred, gt)
+                # Simple ROC - If IoU above some threshold carry on
+                # Complex ROX - Evaluate TP/FP/TN/FN using iou and thresh per pred/gt occurance
+
+                if simple_roc:  # Only care that IoU is greater than thresh
+                    if iou[0][0] > iou_thresh:
+                        for conf in p.scoreThrs:
+                            above_thresh = False
+                            if pred['score'] > conf:
+                                # If score is above the conf level, consider it a "Right" prediction for that category (Class 1)
+                                # If score is below conf level, consider it a "Wrong" pred for that category (Class 0)
+                                above_thresh = True
+
+                            # True Positives
+                            # Correct Pred and GT and match catId
+                            # OR Pred != catId, but score is below thresh and GT matches catId
+                            if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
+                                num_tp[conf] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
+                                num_tp[conf] += 1
+
+                            # False Positives
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
+                                num_fp[conf] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
+                                num_fp[conf] += 1
+
+                            # True Negatives
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
+                                num_tn[conf] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
+                                num_tn[conf] += 1
+
+                            # False Negatives
+                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
+                                num_fn[conf] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                                num_fn[conf] += 1
+
+                    else:
+                        continue
+
+                if complex_roc:  # Only care that IoU is greater than thresh
+                    if iou > iou_thresh:
+                        for conf in p.scoreThrs:
+                            above_thresh = False
+                            if pred['score'] > conf:
+                                # If score is above the conf level, consider it a "Right" prediction for that category (Class 1)
+                                # If score is below conf level, consider it a "Wrong" pred for that category (Class 0)
+                                above_thresh = True
+
+        # store results for given image and category
+        return {
+            'image_id': imgId,
+            'category_id': catId,
+            'trueNeg': num_tn,
+            'falseNeg': num_fn,
+            'falsePos': num_fp,
+            'truePos': num_tp
+        }
 
     def plot_roc(self, fpr, tpr):
+        # FPR should be from 0 to 1
+        # TPR should be from 1 to 0
         # Reverse order of fpr and tpr so highest IoU threshold is first
-        fpr_flip = np.flip(fpr, axis=0)
+        # fpr_flip = np.flip(fpr, axis=0)
         tpr_flip = np.flip(tpr, axis=0)
-        plt.plot(fpr_flip)
+        plt.plot(tpr_flip, fpr)
         plt.ylabel('TPR')
         plt.xlabel('FPR')
-        plt.show()
+        # plt.show()
+        plt.savefig('roc_plot.png')
+
+        plt.scatter(tpr_flip, fpr)
+        plt.ylabel('TPR')
+        plt.xlabel('FPR')
+        # plt.show()
+        plt.savefig('roc_scatter.png')
         return
 
 
