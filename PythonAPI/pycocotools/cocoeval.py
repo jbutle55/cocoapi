@@ -872,7 +872,7 @@ class COCOeval:
         self.summarize_per_category()
     # add for metric per category end here
 
-    def compute_roc(self, imgId, catId, maxDet, simple_roc=True, use_iou=False):
+    def compute_roc(self, imgId, catId, maxDet, simple_roc=True):
         '''
          perform evaluation for single category and image
          :return: dict (single image results)
@@ -918,7 +918,7 @@ class COCOeval:
                 # Simple ROC - If IoU above some threshold carry on
                 # Complex ROX - Evaluate TP/FP/TN/FN using iou and thresh per pred/gt occurance
 
-                if simple_roc:  # Only care that IoU is greater than thresh
+                if not use_iou:  # Only care that IoU is greater than thresh
                     if iou[0][0] > self.iou_thresh:
                         for conf in p.scoreThrs:
                             above_thresh = False
@@ -956,7 +956,7 @@ class COCOeval:
                     else:
                         continue
 
-                if use_iou:  # Use IoU as True-False threshold rather than score
+                elif use_iou:  # Use IoU as True-False threshold rather than score
                     if pred['score'] > self.score_thresh:
                         for iou_l in p.roc_iou:
                             above_thresh = False
