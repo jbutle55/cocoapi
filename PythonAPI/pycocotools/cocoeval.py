@@ -871,6 +871,7 @@ class COCOeval:
          '''
         p = self.params
         iou_thresh = 0.75
+        print(f'Using ROC IoU: {iou_thresh}')
 
         all_gt = []
         all_dt = []
