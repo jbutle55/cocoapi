@@ -870,7 +870,7 @@ class COCOeval:
          :return: dict (single image results)
          '''
         p = self.params
-        iou_thresh = 0.5
+        iou_thresh = 0.75
 
         all_gt = []
         all_dt = []
