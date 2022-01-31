@@ -60,7 +60,7 @@ class COCOeval:
     # Data, paper, and tutorials available at:  http://mscoco.org/
     # Code written by Piotr Dollar and Tsung-Yi Lin, 2015.
     # Licensed under the Simplified BSD License [see coco/license.txt]
-    def __init__(self, cocoGt=None, cocoDt=None, iouType='segm'):
+    def __init__(self, cocoGt=None, cocoDt=None, iouType='segm', roc_type='score', iou_thresh=0.5, score_thresh=0.5):
         '''
         Initialize CocoEval using coco APIs for gt and dt
         :param cocoGt: coco object with ground truth annotations
@@ -82,7 +82,15 @@ class COCOeval:
         if not cocoGt is None:
             self.params.imgIds = sorted(cocoGt.getImgIds())
             self.params.catIds = sorted(cocoGt.getCatIds())
-
+        self.roc_type = roc_type
+        if self.roc_type == 'score':
+            self.iou_thresh = iou_thresh  # IoU threshold for score-based ROC
+            print(f'Using ROC IoU: {self.iou_thresh}')
+        elif self.roc_type == 'iou':
+            self.score_thresh = score_thresh  # Score threshold for IoU-based ROC
+            print(f'Using ROC IoU: {self.score_thresh}')
+        else:
+            print('Expected \'score\' or \'iou\' for roc_type.')
 
     def _prepare(self):
         '''
@@ -864,14 +872,14 @@ class COCOeval:
         self.summarize_per_category()
     # add for metric per category end here
 
-    def compute_roc(self, imgId, catId, maxDet, simple_roc=True, complex_roc=False):
+    def compute_roc(self, imgId, catId, maxDet, simple_roc=True, use_iou=False):
         '''
          perform evaluation for single category and image
          :return: dict (single image results)
          '''
         p = self.params
-        iou_thresh = 0.75
-        print(f'Using ROC IoU: {iou_thresh}')
+
+        use_iou = (self.roc_type == 'iou')
 
         all_gt = []
         all_dt = []
@@ -890,13 +898,20 @@ class COCOeval:
         all_gt = [item for x in range(len(all_gt)) for item in all_gt[x]]
 
         p.scoreThrs = np.linspace(0.0, 1.0, 100)
+        p.roc_iou = np.linspace(0.0, 1.0, 100)
 
         # Determine TP, FP, TN, FN using catId as TP class
         # Determine these values for each confidence level of p.scoreThrs
-        num_tn = {t: 0 for t in p.scoreThrs}
-        num_tp = {t: 0 for t in p.scoreThrs}
-        num_fn = {t: 0 for t in p.scoreThrs}
-        num_fp = {t: 0 for t in p.scoreThrs}
+        if not use_iou:
+            num_tn = {t: 0 for t in p.scoreThrs}
+            num_tp = {t: 0 for t in p.scoreThrs}
+            num_fn = {t: 0 for t in p.scoreThrs}
+            num_fp = {t: 0 for t in p.scoreThrs}
+        else:
+            num_tn = {t: 0 for t in p.roc_iou}
+            num_tp = {t: 0 for t in p.roc_iou}
+            num_fn = {t: 0 for t in p.roc_iou}
+            num_fp = {t: 0 for t in p.roc_iou}
         for pred in all_dt:
             for gt in all_gt:
                 iou = self.compute_single_IoU(imgId, pred, gt)
@@ -904,7 +919,7 @@ class COCOeval:
                 # Complex ROX - Evaluate TP/FP/TN/FN using iou and thresh per pred/gt occurance
 
                 if simple_roc:  # Only care that IoU is greater than thresh
-                    if iou[0][0] > iou_thresh:
+                    if iou[0][0] > self.iou_thresh:
                         for conf in p.scoreThrs:
                             above_thresh = False
                             if pred['score'] > conf:
@@ -941,14 +956,39 @@ class COCOeval:
                     else:
                         continue
 
-                if complex_roc:  # Only care that IoU is greater than thresh
-                    if iou > iou_thresh:
-                        for conf in p.scoreThrs:
+                if use_iou:  # Use IoU as True-False threshold rather than score
+                    if pred['score'] > self.score_thresh:
+                        for iou_l in p.roc_iou:
                             above_thresh = False
-                            if pred['score'] > conf:
-                                # If score is above the conf level, consider it a "Right" prediction for that category (Class 1)
-                                # If score is below conf level, consider it a "Wrong" pred for that category (Class 0)
+                            if iou[0][0] > iou_l:
                                 above_thresh = True
+
+                            # True Positives
+                            if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
+                                num_tp[iou_l] += 1
+
+                            # False Positives
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
+                                num_fp[iou_l] += 1
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
+                                num_fp[iou_l] += 1
+                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
+                                num_fp[iou_l] += 1
+
+                            # True Negatives
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
+                                num_tn[iou_l] += 1  # TODO This is obscure?
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
+                                num_tn[iou_l] += 1
+
+                            # False Negatives
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
+                                num_fn[iou_l] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                                num_fn[iou_l] += 1
+
+                    else:
+                        continue
 
         # store results for given image and category
         return {
