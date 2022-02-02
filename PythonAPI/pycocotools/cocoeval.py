@@ -86,7 +86,7 @@ class COCOeval:
         if self.roc_type == 'score':
             self.iou_thresh = iou_thresh  # IoU threshold for score-based ROC
             print(f'Using ROC IoU: {self.iou_thresh}')
-        elif self.roc_type == 'iou':
+        elif self.roc_type == 'iou' or self.roc_type == 'single_roc':
             self.score_thresh = score_thresh  # Score threshold for IoU-based ROC
             print(f'Using ROC IoU: {self.score_thresh}')
         else:
@@ -902,7 +902,7 @@ class COCOeval:
 
         # Determine TP, FP, TN, FN using catId as TP class
         # Determine these values for each confidence level of p.scoreThrs
-        if not use_iou:
+        if self.roc_type == 'score':
             num_tn = {t: 0 for t in p.scoreThrs}
             num_tp = {t: 0 for t in p.scoreThrs}
             num_fn = {t: 0 for t in p.scoreThrs}
@@ -918,7 +918,7 @@ class COCOeval:
                 # Simple ROC - If IoU above some threshold carry on
                 # Complex ROX - Evaluate TP/FP/TN/FN using iou and thresh per pred/gt occurance
 
-                if not use_iou:  # Only care that IoU is greater than thresh
+                if self.roc_type == 'score':  # Only care that IoU is greater than thresh
                     if iou[0][0] > self.iou_thresh:
                         for conf in p.scoreThrs:
                             above_thresh = False
@@ -956,7 +956,7 @@ class COCOeval:
                     else:
                         continue
 
-                elif use_iou:  # Use IoU as True-False threshold rather than score
+                elif self.roc_type == 'roc':  # Use IoU as True-False threshold rather than score
                     if pred['score'] > self.score_thresh:
                         for iou_l in p.roc_iou:
                             above_thresh = False
@@ -989,6 +989,31 @@ class COCOeval:
 
                     else:
                         continue
+
+                elif self.roc_type == 'single_roc':
+                    if gt['category_id'] != catId:
+                        continue
+                    if pred['score'] > self.score_thresh:
+                        for iou_l in p.roc_iou:
+                            above_thresh = False
+                            if iou[0][0] > iou_l:
+                                above_thresh = True
+
+                            # True Positives
+                            if pred['category_id'] == gt['category_id'] and above_thresh:
+                                num_tp[iou_l] += 1
+
+                            # False Positive
+                            if pred['category_id'] == gt['category_id'] and not above_thresh:
+                                num_fp[iou_l] += 1
+
+                            # True Negative
+                            if pred['category_id'] != gt['category_id'] and not above_thresh:
+                                num_tn[iou_l] += 1
+
+                            # False Negative
+                            if pred['category_id'] != gt['category_id'] and above_thresh:
+                                num_fn[iou_l] += 1
 
         # store results for given image and category
         return {
