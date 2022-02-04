@@ -86,7 +86,7 @@ class COCOeval:
         if self.roc_type == 'score':
             self.iou_thresh = iou_thresh  # IoU threshold for score-based ROC
             print(f'Using ROC IoU: {self.iou_thresh}')
-        elif self.roc_type == 'iou' or self.roc_type == 'single_roc':
+        elif self.roc_type == 'iou' or self.roc_type == 'single_roc' or self.roc_type == 'test':
             self.score_thresh = score_thresh  # Score threshold for IoU-based ROC
             print(f'Using ROC IoU: {self.score_thresh}')
         else:
@@ -632,22 +632,23 @@ class COCOeval:
 
         def _summarizeDets():
             print('Summarizing...')
-            stats = np.zeros((12,))
+            stats = np.zeros((15,))
             stats[0] = _summarize(1)
             stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
             stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
             stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
             stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
             stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
-            stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-            stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-            stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-            stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
+            stats[6] = _summarize(1, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[7] = _summarize(1, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[8] = _summarize(1, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
+            stats[9] = _summarize(0, maxDets=self.params.maxDets[0])
+            stats[10] = _summarize(0, maxDets=self.params.maxDets[1])
+            stats[11] = _summarize(0, maxDets=self.params.maxDets[2])
+            stats[12] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[13] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[14] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
             _summarizeROC()
-            # print('F1 Testing Below')
-            # _summarizeFscore()
             return stats
 
         def _summarizeKps():
@@ -879,8 +880,6 @@ class COCOeval:
          '''
         p = self.params
 
-        use_iou = (self.roc_type == 'iou')
-
         all_gt = []
         all_dt = []
         for cat in p.catIds:
@@ -952,6 +951,42 @@ class COCOeval:
                                 num_fn[conf] += 1
                             elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
                                 num_fn[conf] += 1
+
+                    else:
+                        continue
+
+                elif self.roc_type == 'test':
+                    if pred['score'] > self.score_thresh:
+                        for iou_th in p.roc_iou:
+                            above_thresh = False
+                            if iou[0][0] > iou_th:
+                                above_thresh = True
+
+                            # True Positives
+                            # Correct Pred and GT and match catId
+                            # OR Pred != catId, but score is below thresh and GT matches catId
+                            if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
+                                num_tp[iou_th] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
+                                num_tp[iou_th] += 1
+
+                            # False Positives
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
+                                num_fp[iou_th] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
+                                num_fp[iou_th] += 1
+
+                            # True Negatives
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
+                                num_tn[iou_th] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
+                                num_tn[iou_th] += 1
+
+                            # False Negatives
+                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
+                                num_fn[iou_th] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                                num_fn[iou_th] += 1
 
                     else:
                         continue
