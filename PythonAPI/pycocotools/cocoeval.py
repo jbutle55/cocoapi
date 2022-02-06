@@ -501,18 +501,48 @@ class COCOeval:
 
         tpr = {}
         fpr = {}
-        for score in p.scoreThrs:
-            # TPR = TP / (TP + FN)
-            if cat_totals[score]['tp'] == 0:
-                tpr[score] = 0
-            else:
-                tpr[score] = cat_totals[score]['tp'] / (cat_totals[score]['tp'] + cat_totals[score]['fp'])
+        if self.roc_type == 'score':
+            for score in p.scoreThrs:
+                # TPR = TP / (TP + FN)
+                if cat_totals[score]['tp'] == 0:
+                    tpr[score] = 0
+                else:
+                    tpr[score] = cat_totals[score]['tp'] / (cat_totals[score]['tp'] + cat_totals[score]['fn'])
 
-            # FPR = FP / (TN + FP)
-            if cat_totals[score]['fp'] == 0:
-                fpr[score] = 0
-            else:
-                fpr[score] = cat_totals[score]['fp'] / (cat_totals[score]['tn'] + cat_totals[score]['fp'])
+                # FPR = FP / (TN + FP)
+                if cat_totals[score]['fp'] == 0:
+                    fpr[score] = 0
+                else:
+                    fpr[score] = cat_totals[score]['fp'] / (cat_totals[score]['tn'] + cat_totals[score]['fp'])
+
+        elif self.roc_type == 'iou' or self.roc_type == 'single_iou':
+            for iou in p.roc_iou:
+                # TPR = TP / (TP + FN)
+                if cat_totals[iou]['tp'] == 0:
+                    tpr[iou] = 0
+                else:
+                    tpr[iou] = cat_totals[iou]['tp'] / (cat_totals[iou]['tp'] + cat_totals[iou]['fn'])
+
+                # FPR = FP / (TN + FP)
+                if cat_totals[iou]['fp'] == 0:
+                    fpr[iou] = 0
+                else:
+                    fpr[iou] = cat_totals[iou]['fp'] / (cat_totals[iou]['tn'] + cat_totals[iou]['fp'])
+
+        elif self.roc_type == 'test':
+            for iou in p.roc_iou:
+                # "TPR" = TP / (TP + FP)
+                if cat_totals[iou]['tp'] == 0:
+                    tpr[iou] = 0
+                else:
+                    tpr[iou] = cat_totals[iou]['tp'] / (cat_totals[iou]['tp'] + cat_totals[iou]['fp'])
+
+                # FPR = FP / (TN + FP)
+                if cat_totals[iou]['fp'] == 0:
+                    fpr[iou] = 0
+                else:
+                    fpr[iou] = cat_totals[iou]['fp'] / (cat_totals[iou]['tn'] + cat_totals[iou]['fp'])
+
 
         self.eval = {
             'params': p,
@@ -955,39 +985,36 @@ class COCOeval:
                     else:
                         continue
 
-                if self.roc_type == 'test':  # Only care that IoU is greater than thresh
-                    if not iou[0][0] > 0.0:
-                        continue
+                elif self.roc_type == 'test':  # Use IoU as True-False threshold rather than score
                     if pred['score'] > self.score_thresh:
+                        # if not iou[0][0] > 0.0:
+                        #     continue
+
                         for iou_l in p.roc_iou:
                             above_thresh = False
                             if iou[0][0] > iou_l:
                                 above_thresh = True
 
                             # True Positives
-                            # Correct Pred and GT and match catId
-                            # OR Pred != catId, but score is below thresh and GT matches catId
                             if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
-                                num_tp[iou_l] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
                                 num_tp[iou_l] += 1
 
                             # False Positives
                             elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
                                 num_fp[iou_l] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
+                            # Bad TP
+                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
                                 num_fp[iou_l] += 1
 
                             # True Negatives
-                            elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
-                                num_tn[iou_l] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
+                            if pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
                                 num_tn[iou_l] += 1
 
                             # False Negatives
-                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
+                            if pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
                                 num_fn[iou_l] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                            # Bad TN
+                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
                                 num_fn[iou_l] += 1
 
                     else:
@@ -995,8 +1022,8 @@ class COCOeval:
 
                 elif self.roc_type == 'iou':  # Use IoU as True-False threshold rather than score
                     if pred['score'] > self.score_thresh:
-                        if not iou[0][0] > 0.0:
-                            continue
+                        # if not iou[0][0] > 0.0:
+                        #     continue
 
                         for iou_l in p.roc_iou:
                             above_thresh = False
@@ -1017,7 +1044,7 @@ class COCOeval:
 
                             # True Negatives
                             elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
-                                num_tn[iou_l] += 1  # TODO This is obscure?
+                                num_tn[iou_l] += 1
                             elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
                                 num_tn[iou_l] += 1
 
@@ -1033,8 +1060,8 @@ class COCOeval:
                 elif self.roc_type == 'single_iou':
                     if gt['category_id'] != catId:
                         continue
-                    if not iou[0][0] > 0.0:
-                        continue
+                    # if not iou[0][0] > 0.0:
+                    #     continue
                     if pred['score'] > self.score_thresh:
                         for iou_l in p.roc_iou:
                             above_thresh = False
