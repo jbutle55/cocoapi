@@ -1158,10 +1158,22 @@ class COCOeval:
 
         tps_flip = np.flip(tps)
         plt.figure()
-        plt.plot(tps, fps)
+        plt.plot(fps, tps)
         plt.ylabel('TP')
         plt.xlabel('FP')
         plt.savefig('tpfp_plot.png')
+
+        plt.figure()
+        plt.plot(self.params.roc_iou, fps)
+        plt.ylabel('FPs')
+        plt.xlabel('IoU')
+        plt.savefig('fp_plot.png')
+
+        plt.figure()
+        plt.plot(self.params.roc_iou, tps)
+        plt.ylabel('TPs')
+        plt.xlabel('IoU')
+        plt.savefig('tp_plot.png')
         return
 
 
