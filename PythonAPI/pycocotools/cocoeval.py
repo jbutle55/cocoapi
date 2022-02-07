@@ -501,15 +501,19 @@ class COCOeval:
 
         tpr = {}
         fpr = {}
+        tps = {}
+        fps = {}
         if self.roc_type == 'score':
             for score in p.scoreThrs:
                 # TPR = TP / (TP + FN)
+                tps[score] = cat_totals[score]['tp']
                 if cat_totals[score]['tp'] == 0:
                     tpr[score] = 0
                 else:
                     tpr[score] = cat_totals[score]['tp'] / (cat_totals[score]['tp'] + cat_totals[score]['fn'])
 
                 # FPR = FP / (TN + FP)
+                fps[score] = cat_totals[score]['fp']
                 if cat_totals[score]['fp'] == 0:
                     fpr[score] = 0
                 else:
@@ -518,12 +522,14 @@ class COCOeval:
         elif self.roc_type == 'iou' or self.roc_type == 'single_iou':
             for iou in p.roc_iou:
                 # TPR = TP / (TP + FN)
+                tps[iou] = cat_totals[iou]['tp']
                 if cat_totals[iou]['tp'] == 0:
                     tpr[iou] = 0
                 else:
                     tpr[iou] = cat_totals[iou]['tp'] / (cat_totals[iou]['tp'] + cat_totals[iou]['fn'])
 
                 # FPR = FP / (TN + FP)
+                fps[iou] = cat_totals[iou]['fp']
                 if cat_totals[iou]['fp'] == 0:
                     fpr[iou] = 0
                 else:
@@ -552,7 +558,9 @@ class COCOeval:
             'recall':   recall,
             'scores': scores,
             'fpr': fpr,
-            'tpr': tpr
+            'tpr': tpr,
+            'tps': tps,
+            'fps': fps
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
@@ -706,9 +714,14 @@ class COCOeval:
             fpr = self.eval['fpr']
             tpr = self.eval['tpr']
 
+            tps = self.eval['tps']
+            fps = self.eval['fps']
+
             fpr_list = [fpr[item] for item in fpr]
             tpr_list = [tpr[item] for item in tpr]
             score_list = [item for item in p.scoreThrs]
+            fps_list = [fps[item] for item in fps]
+            tps_list = [tps[item] for item in tps]
 
             np.set_printoptions(precision=4)
             np.set_printoptions(suppress=True)
@@ -724,7 +737,7 @@ class COCOeval:
                 file.write(str(tpr_list))
                 file.write('\n')
 
-            self.plot_roc(fpr_list, tpr_list)
+            self.plot_roc(fpr_list, tpr_list, tps_list, fps_list)
             return
 
         def _summarizeFscore():
@@ -985,6 +998,37 @@ class COCOeval:
                     else:
                         continue
 
+                # TODO
+                if self.roc_type == 'single_score':
+                    if gt['category_id'] != catId:
+                        continue
+                    if iou[0][0] > self.iou_thresh:
+                        for conf in p.scoreThrs:
+                            above_thresh = False
+                            if pred['score'] > conf:
+                               above_thresh = True
+
+                            # True Positives
+                            if pred['category_id'] == gt['category_id'] and above_thresh:
+                                num_tp[conf] += 1
+
+                            # False Positives
+                            elif pred['category_id'] == gt['category_id'] and not above_thresh:  # For IoU metric
+                                num_fp[conf] += 1
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                                num_fp[conf] += 1
+
+                            # True Negatives
+                            elif pred['category_id'] == gt['category_id'] and gt['category_id'] != catId and above_thresh:
+                                num_tn[conf] += 1
+
+                            # False Negatives
+                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                                num_fn[conf] += 1
+
+                    else:
+                        continue
+
                 elif self.roc_type == 'test':  # Use IoU as True-False threshold rather than score
                     if pred['score'] > self.score_thresh:
                         # if not iou[0][0] > 0.0:
@@ -1058,9 +1102,7 @@ class COCOeval:
                         continue
 
                 elif self.roc_type == 'single_iou':
-                    if gt['category_id'] != catId:
-                        continue
-                    # if not iou[0][0] > 0.0:
+                    # if gt['category_id'] != catId:
                     #     continue
                     if pred['score'] > self.score_thresh:
                         for iou_l in p.roc_iou:
@@ -1069,11 +1111,13 @@ class COCOeval:
                                 above_thresh = True
 
                             # True Positives
-                            if pred['category_id'] == gt['category_id'] and above_thresh:
+                            if pred['category_id'] == gt['category_id'] and gt['category_id'] == catId and above_thresh:
                                 num_tp[iou_l] += 1
 
                             # False Positive
-                            if pred['category_id'] == gt['category_id'] and not above_thresh:
+                            if pred['category_id'] == gt['category_id'] and gt['category_id'] == catId and not above_thresh:
+                                num_fp[iou_l] += 1
+                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
                                 num_fp[iou_l] += 1
 
                             # True Negative
@@ -1094,7 +1138,7 @@ class COCOeval:
             'truePos': num_tp
         }
 
-    def plot_roc(self, fpr, tpr):
+    def plot_roc(self, fpr, tpr, tps, fps):
         # FPR should be from 0 to 1
         # TPR should be from 1 to 0
         # Reverse order of fpr and tpr so highest IoU threshold is first
@@ -1111,6 +1155,13 @@ class COCOeval:
         plt.xlabel('FPR')
         # plt.show()
         plt.savefig('roc_scatter.png')
+
+        tps_flip = np.flip(tps)
+        plt.figure()
+        plt.plot(tps, fps)
+        plt.ylabel('TP')
+        plt.xlabel('FP')
+        plt.savefig('tpfp_plot.png')
         return
 
 
