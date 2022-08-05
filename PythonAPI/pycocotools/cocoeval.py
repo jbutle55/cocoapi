@@ -8,6 +8,7 @@ from . import mask as maskUtils
 import copy
 import matplotlib.pyplot as plt
 import os
+from pathlib import Path
 
 
 class COCOeval:
@@ -79,6 +80,7 @@ class COCOeval:
         self._paramsEval = {}               # parameters for evaluation
         self.stats = []                     # result summarization
         self.ious = {}                      # ious between all gts and dts
+        self.total_gts = 0                  # Total number of objects that can be possibly predicted
         if not cocoGt is None:
             self.params.imgIds = sorted(cocoGt.getImgIds())
             self.params.catIds = sorted(cocoGt.getCatIds())
@@ -162,16 +164,24 @@ class COCOeval:
 
         evaluateImg = self.evaluateImg
         rocImg = self.compute_roc
+        rocImg_iou = self.compute_roc_iou
         maxDet = p.maxDets[-1]
         self.evalImgs = [evaluateImg(imgId, catId, areaRng, maxDet)
                          for catId in catIds
                          for areaRng in p.areaRng
                          for imgId in p.imgIds
                          ]
-        self.rocImgs = [rocImg(imgId, catId, maxDet, simple_roc=True)
-                        for catId in catIds
-                        for imgId in p.imgIds
-                        ]
+        if self.roc_type == 'score':
+            self.rocImgs = [rocImg(imgId, catId, maxDet)
+                            for catId in catIds
+                            for imgId in p.imgIds
+                            ]
+        elif self.roc_type == 'iou':
+            self.rocImgs = [rocImg_iou(imgId, catId, maxDet)
+                            for catId in catIds
+                            for imgId in p.imgIds
+                            ]
+        self.total_gts = len(self._gts)
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format(toc-tic))
@@ -294,7 +304,7 @@ class COCOeval:
         ious = maskUtils.iou(d, g, iscrowd)
         return ious
 
-    def evaluateImg(self, imgId, catId, aRng, maxDet, roc=False):
+    def evaluateImg(self, imgId, catId, aRng, maxDet):
         '''
         perform evaluation for single category and image
         :return: dict (single image results)
@@ -635,6 +645,9 @@ class COCOeval:
                 print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_f1))
             else:
                 print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
+
+            self.plot_pr_curve(self.eval['recall'], self.eval['precision'], self.eval['scores'])
+
             return mean_s
 
         # Below for testing detection of only small objects in narrow lots
@@ -916,7 +929,7 @@ class COCOeval:
         self.summarize_per_category()
     # add for metric per category end here
 
-    def compute_roc(self, imgId, catId, maxDet, simple_roc=True):
+    def compute_roc(self, imgId, catId, maxDet):
         '''
          perform evaluation for single category and image
          :return: dict (single image results)
@@ -939,194 +952,141 @@ class COCOeval:
         all_dt = [item for x in range(len(all_dt)) for item in all_dt[x]]
         all_gt = [item for x in range(len(all_gt)) for item in all_gt[x]]
 
-        p.scoreThrs = np.linspace(0.0, 1.0, 100)
-        p.roc_iou = np.linspace(0.0, 1.0, 100)
-
         # Determine TP, FP, TN, FN using catId as TP class
         # Determine these values for each confidence level of p.scoreThrs
-        if self.roc_type == 'score':
-            num_tn = {t: 0 for t in p.scoreThrs}
-            num_tp = {t: 0 for t in p.scoreThrs}
-            num_fn = {t: 0 for t in p.scoreThrs}
-            num_fp = {t: 0 for t in p.scoreThrs}
-        else:
-            num_tn = {t: 0 for t in p.roc_iou}
-            num_tp = {t: 0 for t in p.roc_iou}
-            num_fn = {t: 0 for t in p.roc_iou}
-            num_fp = {t: 0 for t in p.roc_iou}
-        for pred in all_dt:
-            for gt in all_gt:
+        num_tn = {t: 0 for t in p.scoreThrs}
+        num_tp = {t: 0 for t in p.scoreThrs}
+        num_fn = {t: 0 for t in p.scoreThrs}
+        num_fp = {t: 0 for t in p.scoreThrs}
+
+        for gt in all_gt:
+            for pred in all_dt:
                 iou = self.compute_single_IoU(imgId, pred, gt)
                 # Simple ROC - If IoU above some threshold carry on
                 # Complex ROX - Evaluate TP/FP/TN/FN using iou and thresh per pred/gt occurance
 
-                if self.roc_type == 'score':  # Only care that IoU is greater than thresh
-                    if iou[0][0] > self.iou_thresh:
-                        for conf in p.scoreThrs:
-                            above_thresh = False
-                            if pred['score'] > conf:
-                                # If score is above the conf level, consider it a "Right" prediction for that category (Class 1)
-                                # If score is below conf level, consider it a "Wrong" pred for that category (Class 0)
-                                above_thresh = True
+                if iou[0][0] > self.iou_thresh:
+                    for conf in p.scoreThrs:
+                        above_thresh = False
+                        if pred['score'] > conf:
+                            # If score is above the conf level, consider it a "Right" prediction for that category (Class 1)
+                            # If score is below conf level, consider it a "Wrong" pred for that category (Class 0)
+                            above_thresh = True
 
-                            # True Positives
-                            # Correct Pred and GT and match catId
-                            # OR Pred != catId, but score is below thresh and GT matches catId
-                            if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
-                                num_tp[conf] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
-                                num_tp[conf] += 1
+                        # True Positives
+                        # Correct Pred and GT and match catId
+                        # OR Pred != catId, but score is below thresh and GT matches catId
+                        if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
+                            num_tp[conf] += 1
+                        elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
+                            num_tp[conf] += 1
 
-                            # False Positives
-                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
-                                num_fp[conf] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
-                                num_fp[conf] += 1
+                        # False Positives
+                        elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
+                            num_fp[conf] += 1
+                        elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
+                            num_fp[conf] += 1
 
-                            # True Negatives
-                            elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
-                                num_tn[conf] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
-                                num_tn[conf] += 1
+                        # True Negatives
+                        elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
+                            num_tn[conf] += 1
+                        elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
+                            num_tn[conf] += 1
 
-                            # False Negatives
-                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
-                                num_fn[conf] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
-                                num_fn[conf] += 1
+                        # False Negatives
+                        elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
+                            num_fn[conf] += 1
+                        elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
+                            num_fn[conf] += 1
 
-                    else:
-                        continue
+                else:
+                    continue
 
-                # TODO
-                if self.roc_type == 'single_score':
-                    if gt['category_id'] != catId:
-                        continue
-                    if iou[0][0] > self.iou_thresh:
-                        for conf in p.scoreThrs:
-                            above_thresh = False
-                            if pred['score'] > conf:
-                               above_thresh = True
+        # store results for given image and category
+        return {
+            'image_id': imgId,
+            'category_id': catId,
+            'trueNeg': num_tn,
+            'falseNeg': num_fn,
+            'falsePos': num_fp,
+            'truePos': num_tp
+        }
 
-                            # True Positives
-                            if pred['category_id'] == gt['category_id'] and above_thresh:
-                                num_tp[conf] += 1
+    def compute_roc_iou(self, imgId, catId, maxDet):
+        '''
+                 perform evaluation for single category and image
+                 :return: dict (single image results)
+                 '''
+        p = self.params
 
-                            # False Positives
-                            elif pred['category_id'] == gt['category_id'] and not above_thresh:  # For IoU metric
-                                num_fp[conf] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
-                                num_fp[conf] += 1
+        all_gt = []
+        all_dt = []
+        for cat in p.catIds:
+            if len(self._gts[imgId, cat]) != 0:
+                all_gt.append(self._gts[imgId, cat])
+            if len(self._dts[imgId, cat]) != 0:
+                all_dt.append(self._dts[imgId, cat])
 
-                            # True Negatives
-                            elif pred['category_id'] == gt['category_id'] and gt['category_id'] != catId and above_thresh:
-                                num_tn[conf] += 1
+        if len(all_gt) == 0 and len(all_dt) == 0:
+            # Nothing detected and nothing to be detected so skip
+            return None
 
-                            # False Negatives
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
-                                num_fn[conf] += 1
+        # Get list of dicts
+        all_dt = [item for x in range(len(all_dt)) for item in all_dt[x]]
+        all_gt = [item for x in range(len(all_gt)) for item in all_gt[x]]
 
-                    else:
-                        continue
+        # Determine TP, FP, TN, FN using catId as TP class
+        # Determine these values for each confidence level of p.scoreThrs
+        num_tn = {t: 0 for t in p.roc_iou}
+        num_tp = {t: 0 for t in p.roc_iou}
+        num_fn = {t: 0 for t in p.roc_iou}
+        num_fp = {t: 0 for t in p.roc_iou}
 
-                elif self.roc_type == 'test':  # Use IoU as True-False threshold rather than score
+        for iou_l in p.roc_iou:
+            for gt in all_gt:
+                if gt['category_id'] != catId:
+                    tn_flag = True
+                    fn_flag = False
+                else:
+                    tn_flag = False
+                    fn_flag = True
+                for pred in all_dt:
+                    iou = self.compute_single_IoU(imgId, pred, gt)
+                    # Simple ROC - If IoU above some threshold carry on
+                    # Complex ROX - Evaluate TP/FP/TN/FN using iou and thresh per pred/gt occurance
+
+                    above_thresh = False
+                    if iou[0][0] > iou_l:
+                        above_thresh = True
+
                     if pred['score'] > self.score_thresh:
-                        # if not iou[0][0] > 0.0:
-                        #     continue
-
-                        for iou_l in p.roc_iou:
-                            above_thresh = False
-                            if iou[0][0] > iou_l:
-                                above_thresh = True
-
-                            # True Positives
-                            if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
-                                num_tp[iou_l] += 1
-
-                            # False Positives
-                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
-                                num_fp[iou_l] += 1
-                            # Bad TP
-                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
-                                num_fp[iou_l] += 1
-
-                            # True Negatives
-                            if pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
-                                num_tn[iou_l] += 1
-
-                            # False Negatives
-                            if pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
-                                num_fn[iou_l] += 1
-                            # Bad TN
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
-                                num_fn[iou_l] += 1
-
-                    else:
-                        continue
-
-                elif self.roc_type == 'iou':  # Use IoU as True-False threshold rather than score
-                    if pred['score'] > self.score_thresh:
-                        # if not iou[0][0] > 0.0:
-                        #     continue
-
-                        for iou_l in p.roc_iou:
-                            above_thresh = False
-                            if iou[0][0] > iou_l:
-                                above_thresh = True
-
-                            # True Positives
-                            if pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and above_thresh:
-                                num_tp[iou_l] += 1
-
-                            # False Positives
-                            elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
-                                num_fp[iou_l] += 1
-                            elif pred['category_id'] == catId and gt['category_id'] != catId and not above_thresh:
-                                num_fp[iou_l] += 1
-                            elif pred['category_id'] == gt['category_id'] and pred['category_id'] == catId and not above_thresh:
-                                num_fp[iou_l] += 1
-
-                            # True Negatives
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and not above_thresh:
-                                num_tn[iou_l] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] != catId and above_thresh:
-                                num_tn[iou_l] += 1
-
-                            # False Negatives
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and not above_thresh:
-                                num_fn[iou_l] += 1
-                            elif pred['category_id'] != catId and gt['category_id'] == catId and above_thresh:
-                                num_fn[iou_l] += 1
-
-                    else:
-                        continue
-
-                elif self.roc_type == 'single_iou':
-                    # if gt['category_id'] != catId:
-                    #     continue
-                    if pred['score'] > self.score_thresh:
-                        for iou_l in p.roc_iou:
-                            above_thresh = False
-                            if iou[0][0] > iou_l:
-                                above_thresh = True
-
                             # True Positives
                             if pred['category_id'] == gt['category_id'] and gt['category_id'] == catId and above_thresh:
                                 num_tp[iou_l] += 1
 
-                            # False Positive
-                            if pred['category_id'] == gt['category_id'] and gt['category_id'] == catId and not above_thresh:
-                                num_fp[iou_l] += 1
+                            # False Positives
                             elif pred['category_id'] == catId and gt['category_id'] != catId and above_thresh:
+                                # False prediction
+                                num_fp[iou_l] += 1
+                            elif pred['category_id'] == gt['category_id'] and gt['category_id'] == catId and not above_thresh:
+                                # Bad TP IoU
                                 num_fp[iou_l] += 1
 
-                            # True Negative
-                            if pred['category_id'] != gt['category_id'] and not above_thresh:
-                                num_tn[iou_l] += 1
+                            # True Negatives
+                            if gt['category_id'] != catId and pred['category_id'] == catId and above_thresh:
+                                tn_flag = False
 
-                            # False Negative
-                            if pred['category_id'] != gt['category_id'] and above_thresh:
-                                num_fn[iou_l] += 1
+                            # False Negatives
+                            if gt['category_id'] == catId and pred['category_id'] == catId and above_thresh:
+                                fn_flag = False
+
+                    else:
+                        continue
+
+                if tn_flag:
+                    num_tn[iou_l] += 1
+                if fn_flag:
+                    num_fn[iou_l] += 1
 
         # store results for given image and category
         return {
@@ -1142,39 +1102,62 @@ class COCOeval:
         # FPR should be from 0 to 1
         # TPR should be from 1 to 0
         # Reverse order of fpr and tpr so highest IoU threshold is first
-        # fpr_flip = np.flip(fpr, axis=0)
         tpr_flip = np.flip(tpr, axis=0)
-        plt.plot(tpr_flip, fpr)
-        plt.ylabel('TPR')
-        plt.xlabel('FPR')
-        # plt.show()
-        plt.savefig('roc_plot.png')
-
-        plt.scatter(tpr_flip, fpr)
+        plt.scatter(fpr, tpr_flip)
         plt.ylabel('TPR')
         plt.xlabel('FPR')
         # plt.show()
         plt.savefig('roc_scatter.png')
 
-        tps_flip = np.flip(tps)
+        plt.plot(fpr, tpr_flip)
+        plt.ylabel('TPR')
+        plt.xlabel('FPR')
+        # plt.show()
+        plt.savefig('roc_plot.png')
+
+        tps_flip = np.flip(tps)  # TODO Maybe don't flip
         plt.figure()
-        plt.plot(fps, tps)
+        plt.plot(fps, tps_flip)
         plt.ylabel('TP')
         plt.xlabel('FP')
         plt.savefig('tpfp_plot.png')
 
+        fps_norm = [x/self.total_gts for x in fps]
+        tps_norm = [x / self.total_gts for x in tps]
+
         plt.figure()
-        plt.plot(self.params.roc_iou, fps)
+        plt.plot(self.params.roc_iou, fps_norm)
         plt.ylabel('FPs')
         plt.xlabel('IoU')
         plt.savefig('fp_plot.png')
 
         plt.figure()
-        plt.plot(self.params.roc_iou, tps)
+        plt.plot(self.params.roc_iou, tps_norm)
         plt.ylabel('TPs')
         plt.xlabel('IoU')
         plt.savefig('tp_plot.png')
         return
+
+    def plot_pr_curve(self, px, py, ap, save_dir=Path('pr_curve.png'), names=()):
+        # Precision-recall curve
+        fig, ax = plt.subplots(1, 1, figsize=(9, 6), tight_layout=True)
+        py = np.stack(py, axis=1)
+
+        if 0 < len(names) < 21:  # display per-class legend if < 21 classes
+            for i, y in enumerate(py.T):
+                ax.plot(px, y, linewidth=1, label=f'{names[i]} {ap[i, 0]:.3f}')  # plot(recall, precision)
+        else:
+            ax.plot(px, py, linewidth=1, color='grey')  # plot(recall, precision)
+
+        ax.plot(px, py.mean(1), linewidth=3, color='blue', label='all classes %.3f mAP@0.5' % ap[:, 0].mean())
+        ax.set_xlabel('Recall')
+        ax.set_ylabel('Precision')
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        plt.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
+        fig.savefig(save_dir, dpi=250)
+        plt.close()
+
 
 
 class Params:
@@ -1186,6 +1169,7 @@ class Params:
         self.catIds = []
         # np.arange causes trouble.  the data point on arange is slightly larger than the true value
         self.iouThrs = np.linspace(.5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
+        # self.iouThrs = np.linspace(.3, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
         self.recThrs = np.linspace(.0, 1.00, int(np.round((1.00 - .0) / .01)) + 1, endpoint=True)
         self.maxDets = [1, 10, 100]
         # TODO Can create new size divisions here in below 2 lines
@@ -1206,7 +1190,8 @@ class Params:
         #self.areaRng = [[0 ** 2, 1e5 ** 2], [0 ** 2, 32 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
         #self.areaRngLbl = ['all', 'small', 'medium', 'large']
         self.useCats = 1
-        self.scoreThrs = np.linspace(0, 1, 10)  # For ROC confidence levels
+        self.scoreThrs = np.linspace(0.0, 1.0, 10)  # For ROC confidence levels
+        self.roc_iou = np.linspace(0.0, 1.0, 10)
 
     def setKpParams(self):
         self.imgIds = []
